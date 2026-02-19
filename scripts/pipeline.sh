@@ -42,6 +42,7 @@ load_project() {
   fi
   
   source "$SCRIPT_DIR/pipeline.conf"  # global defaults
+  [ -f "$SCRIPT_DIR/pipeline.local.conf" ] && source "$SCRIPT_DIR/pipeline.local.conf"  # local overrides
   source "$conf"                      # project overrides
   
   STATE_FILE="$PROJECTS_DIR/${name}.state.json"
@@ -992,15 +993,23 @@ case "$CMD" in
     echo ""
     echo "Types: bug:, feature:, task: (prefix in description)"
     echo ""
-    echo "Sessions:"
-    echo "  new     → spawns spec-writer session (generates issue)"
-    echo "  assign  → spawns worker session (codes the fix)"
-    echo "  pr-ready → spawns reviewer session (reviews PR)"
-    echo "  reject  → spawns fix session (addresses feedback)"
-    echo "  All sessions are isolated — zero context bleed."
+    echo "Flow:"
+    echo "  new      → creates GitHub issue + Discord forum thread"
+    echo "  assign   → posts issue to thread via webhook (@mentions agent)"
+    echo "  pr-ready → posts review request to thread + #pr-reviews"
+    echo "  approve  → merges PR, deploys, posts to #production"
+    echo "  reject   → posts feedback to thread (@mentions agent)"
+    echo "  close    → closes issue, notifies channels, archives thread"
     exit 0
     ;;
 esac
+
+# Fall back to default project from config
+if [ -z "$PROJECT" ]; then
+  source "$SCRIPT_DIR/pipeline.conf"
+  [ -f "$SCRIPT_DIR/pipeline.local.conf" ] && source "$SCRIPT_DIR/pipeline.local.conf"
+  PROJECT="${DEFAULT_PROJECT:-}"
+fi
 
 if [ -z "$PROJECT" ]; then
   echo "❌ No project specified. Use: pipeline -p <project> $CMD ..."

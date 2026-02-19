@@ -2,3 +2,4 @@
 projects/*.conf
 !projects/example.conf
 projects/*.state.json
+scripts/pipeline.local.conf
