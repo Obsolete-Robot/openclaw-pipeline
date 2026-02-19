@@ -327,9 +327,10 @@ ${description}
 1. Do the work yourself here. No sub-agents or branch workers.
 2. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
 3. After creating PR, run: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
-4. **STOP and WAIT.** A separate reviewer will post results to this thread.
-5. If review ❌: fix the issues, push, then run pr-ready again.
-6. If review ✅: the reviewer handles merge and deploy. You're done.
+4. Post a summary of what you built and what changed.
+5. A separate reviewer will post results to this thread. Wait for their feedback.
+6. If review ❌: fix the issues, push, then run pr-ready again.
+7. If review ✅: the reviewer handles merge and deploy. You're done.
 7. If already resolved/duplicate: \`${pipeline_cmd} close ${issue_num} \"reason\"\`
 
 **🚫 Do NOT run \`approve\`, \`gh pr merge\`, \`gh issue close\`, or self-review.**
