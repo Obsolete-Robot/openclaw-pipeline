@@ -1,0 +1,4 @@
+# Project configs are per-instance (contain server-specific IDs)
+projects/*.conf
+!projects/example.conf
+projects/*.state.json
