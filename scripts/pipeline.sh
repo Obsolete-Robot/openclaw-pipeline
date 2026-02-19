@@ -372,13 +372,18 @@ ${url}
 ${description}
 
 ---
-⚠️ **Do the work yourself here. No sub-agents or branch workers.**
-Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
-After PR: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
-After review ✅: \`${pipeline_cmd} approve ${issue_num}\`
-After review ❌: fix, push, re-request.
-Already resolved? \`${pipeline_cmd} close ${issue_num} \"reason\"\`
-**Always use pipeline commands** for close/approve/reject — they handle notifications."
+⚠️ **RULES — you MUST follow this process:**
+1. Do the work yourself here. No sub-agents or branch workers.
+2. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
+3. After creating PR, run: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
+4. **WAIT for the review** to come back in this thread before proceeding.
+5. After review ✅: \`${pipeline_cmd} approve ${issue_num}\`
+6. After review ❌: fix the issues, push, and re-request review.
+7. If already resolved/duplicate: \`${pipeline_cmd} close ${issue_num} \"reason\"\`
+
+**🚫 Do NOT use raw \`gh pr merge\`, \`gh issue close\`, or self-review.**
+**🚫 Do NOT skip the review step or merge your own PR.**
+Pipeline commands handle merging, deploying, and notifying channels."
 
   webhook_post "$FORUM_WEBHOOK_URL" "$assign_msg" "Pipeline" "$thread"
   
