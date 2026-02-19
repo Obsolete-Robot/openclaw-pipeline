@@ -300,49 +300,8 @@ ${clean_desc}
   
   echo "✅ Issue #$issue_num created: $issue_url"
   
-  # Forum tag
-  local tag_id=""
-  case "$issue_type" in
-    bug) tag_id="$TAG_BUG" ;;
-    feature) tag_id="$TAG_FEATURE" ;;
-    *) tag_id="${TAG_TASK:-}" ;;
-  esac
-  
-  # Create forum thread
-  local thread_title="#${issue_num}: ${title}"
-  [ ${#thread_title} -gt 100 ] && thread_title="${thread_title:0:97}..."
-  
-  echo "🧵 Creating forum thread..."
-  local thread_id
-  thread_id=$(create_forum_thread "$thread_title" "Tracking issue #${issue_num} | Project: ${PROJECT_NAME}" "$tag_id")
-  
-  if [ -z "$thread_id" ]; then
-    echo "❌ Failed to create forum thread"
-    exit 1
-  fi
-  
-  echo "✅ Thread created: $thread_id"
-  
-  set_issue "$issue_num" \
-    "state=created" \
-    "title=$title" \
-    "type=$issue_type" \
-    "thread=$thread_id" \
-    "url=$issue_url" \
-    "branch=issue-${issue_num}" \
-    "project=$PROJECT_NAME" \
-    "auto_merge=$auto_merge" \
-    "created=$(timestamp)"
-  
-  echo ""
-  echo "📌 Issue #$issue_num tracked"
-  echo "🎯 Thread: https://discord.com/channels/$GUILD_ID/$thread_id"
-  
-  # Auto-assign: post issue details + instructions to thread
-  _assign_to_thread "$issue_num" "$title" "$issue_url" "$body" "$thread_id"
-  
-  echo ""
-  echo "✅ Issue #$issue_num created and assigned in thread"
+  # Delegate to assign — it handles thread creation, state tracking, and posting
+  cmd_assign "$issue_num"
 }
 
 # Post issue details to thread via webhook, @mention Larry to pick it up.
@@ -393,15 +352,67 @@ cmd_assign() {
   
   load_secrets
   
+  # Fetch issue from GitHub (works whether or not it's tracked locally)
+  local gh_data
+  gh_data=$(gh issue view "$issue_num" --repo "$REPO" --json title,body,state,labels 2>&1) || {
+    echo "❌ Issue #$issue_num not found on GitHub ($REPO)"
+    exit 1
+  }
+  
+  local title body issue_type
+  title=$(echo "$gh_data" | jq -r '.title')
+  body=$(echo "$gh_data" | jq -r '.body // ""')
+  local state=$(echo "$gh_data" | jq -r '.state')
+  [ "$state" = "CLOSED" ] && { echo "❌ Issue #$issue_num is already closed"; exit 1; }
+  
+  # Detect type from labels
+  issue_type="task"
+  echo "$gh_data" | jq -r '.labels[].name' 2>/dev/null | grep -qi "bug" && issue_type="bug"
+  echo "$gh_data" | jq -r '.labels[].name' 2>/dev/null | grep -qi "enhancement\|feature" && issue_type="feature"
+  
+  local url="https://github.com/${REPO}/issues/${issue_num}"
+  
+  # Check if already tracked
   local thread=$(get_issue "$issue_num" "thread")
-  local title=$(get_issue "$issue_num" "title")
-  local url=$(get_issue "$issue_num" "url")
   
-  [ -z "$thread" ] && { echo "❌ Issue #$issue_num not tracked"; exit 1; }
-  
-  # Fetch full issue body from GitHub
-  local body
-  body=$(gh issue view "$issue_num" --repo "$REPO" --json body -q '.body' 2>/dev/null)
+  # If not tracked, register and create forum thread
+  if [ -z "$thread" ]; then
+    echo "📋 Issue #$issue_num not tracked — setting up..."
+    
+    # Pick forum tag
+    local tag_id=""
+    case "$issue_type" in
+      bug) tag_id="${TAG_BUG:-}" ;;
+      feature) tag_id="${TAG_FEATURE:-}" ;;
+      *) tag_id="${TAG_TASK:-}" ;;
+    esac
+    
+    # Create forum thread
+    local thread_title="#${issue_num}: ${title}"
+    [ ${#thread_title} -gt 100 ] && thread_title="${thread_title:0:97}..."
+    
+    echo "🧵 Creating forum thread..."
+    thread=$(create_forum_thread "$thread_title" "Tracking issue #${issue_num} | Project: ${PROJECT_NAME}" "$tag_id")
+    
+    if [ -z "$thread" ]; then
+      echo "❌ Failed to create forum thread"
+      exit 1
+    fi
+    
+    echo "✅ Thread created: $thread"
+    
+    # Register in state
+    set_issue "$issue_num" \
+      "state=created" \
+      "title=$title" \
+      "type=$issue_type" \
+      "url=$url" \
+      "branch=issue-${issue_num}" \
+      "project=$PROJECT_NAME" \
+      "auto_merge=${DEFAULT_AUTO_MERGE:-true}" \
+      "thread=$thread" \
+      "created=$(timestamp)"
+  fi
   
   # Post to thread via webhook — Larry picks it up and works in the open
   _assign_to_thread "$issue_num" "$title" "$url" "$body" "$thread"
