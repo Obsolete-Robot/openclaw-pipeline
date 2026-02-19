@@ -338,19 +338,11 @@ ${clean_desc}
   echo "📌 Issue #$issue_num tracked"
   echo "🎯 Thread: https://discord.com/channels/$GUILD_ID/$thread_id"
   
-  # Post issue summary to thread (wait for manual assign)
-  local thread_msg="📋 **Issue #${issue_num}: ${title}**
-${issue_url}
-
-${body}
-
----
-**To assign:** \`pipeline -p ${PROJECT_NAME} assign ${issue_num}\`"
-
-  webhook_post "$FORUM_WEBHOOK_URL" "$thread_msg" "Pipeline" "$thread_id"
+  # Auto-assign: post issue details + instructions to thread
+  _assign_to_thread "$issue_num" "$title" "$issue_url" "$body" "$thread_id"
   
   echo ""
-  echo "Ready for assignment: pipeline -p $PROJECT_NAME assign $issue_num"
+  echo "✅ Issue #$issue_num created and assigned in thread"
 }
 
 # Post issue details to thread via webhook, @mention Larry to pick it up.
