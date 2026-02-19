@@ -329,11 +329,12 @@ ${description}
 3. After creating PR, run: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
 4. **STOP and WAIT.** A separate reviewer will post results to this thread.
 5. If review ❌: fix the issues, push, then run pr-ready again.
-6. If review ✅: the reviewer handles merge and deploy. You're done.
+6. If review ✅: you're done! A human will merge when ready.
 7. If already resolved/duplicate: \`${pipeline_cmd} close ${issue_num} \"reason\"\`
 
 **🚫 Do NOT run \`approve\`, \`gh pr merge\`, \`gh issue close\`, or self-review.**
-**🚫 The worker NEVER approves or merges their own PR.**
+**🚫 The worker NEVER approves, merges, or deploys their own PR.**
+**🚫 Only a human runs \`approve\` to merge and deploy.**"
 
   webhook_post "$FORUM_WEBHOOK_URL" "$assign_msg" "Pipeline" "$thread"
   
@@ -473,11 +474,13 @@ Issue: ${issue_url}
 4. Post your review to GitHub:
    - If good: \`gh pr review ${pr_num} --repo ${REPO} --approve --body 'your summary'\`
    - If changes needed: \`gh pr review ${pr_num} --repo ${REPO} --request-changes --body 'your feedback'\`
-5. Then run the pipeline command:
-   - If approved: \`${pipeline_cmd} approve ${issue_num}\`
-   - If rejected: \`${pipeline_cmd} reject ${issue_num} 'feedback summary'\`
-6. Post a summary to the worker thread:
+5. Post a summary to the worker thread:
    \`~/.openclaw/workspace/scripts/notify-review-result.sh ${thread} 'your review summary'\`
+
+## IMPORTANT
+- **Do NOT run pipeline approve or reject.** Just post the review.
+- **Do NOT merge the PR.** A human will decide when to merge.
+- Your job is ONLY to review and post results. Nothing else.
 
 Be thorough but concise. You are NOT the author — give an independent review."
 
