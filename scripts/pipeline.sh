@@ -327,14 +327,13 @@ ${description}
 1. Do the work yourself here. No sub-agents or branch workers.
 2. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
 3. After creating PR, run: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
-4. **WAIT for the review** to come back in this thread before proceeding.
-5. After review ✅: \`${pipeline_cmd} approve ${issue_num}\`
-6. After review ❌: fix the issues, push, and re-request review.
+4. **STOP and WAIT.** A separate reviewer will post results to this thread.
+5. If review ❌: fix the issues, push, then run pr-ready again.
+6. If review ✅: the reviewer handles merge and deploy. You're done.
 7. If already resolved/duplicate: \`${pipeline_cmd} close ${issue_num} \"reason\"\`
 
-**🚫 Do NOT use raw \`gh pr merge\`, \`gh issue close\`, or self-review.**
-**🚫 Do NOT skip the review step or merge your own PR.**
-Pipeline commands handle merging, deploying, and notifying channels."
+**🚫 Do NOT run \`approve\`, \`gh pr merge\`, \`gh issue close\`, or self-review.**
+**🚫 The worker NEVER approves or merges their own PR.**
 
   webhook_post "$FORUM_WEBHOOK_URL" "$assign_msg" "Pipeline" "$thread"
   
@@ -439,36 +438,53 @@ cmd_pr_ready() {
   
   local pr_url="https://github.com/${REPO}/pull/${pr_num}"
   
+  local issue_url="https://github.com/${REPO}/issues/${issue_num}"
+
   # Post to #pr-reviews via webhook (informational)
   webhook_post "$REVIEWS_WEBHOOK_URL" "📤 **PR #${pr_num}** — ${title}
 🔗 PR: ${pr_url}
-📋 Issue: https://github.com/${REPO}/issues/${issue_num}
+📋 Issue: ${issue_url}
 🧵 Thread: <#${thread}>
 Review in progress..." "Larry"
 
-  # Post review request to thread via webhook — @mention Larry to do the review
-  local issue_url="https://github.com/${REPO}/issues/${issue_num}"
-  webhook_post "$FORUM_WEBHOOK_URL" "<@$LARRY_BOT_ID> **PR #${pr_num} ready for review**
+  # Notify the worker's thread that review is underway
+  webhook_post "$FORUM_WEBHOOK_URL" "📤 **PR #${pr_num} submitted — review in progress.**
 🔗 ${pr_url}
-📋 Issue #${issue_num}: ${issue_url}
-
-**Review this PR yourself.** Fetch the diff with \`gh pr diff ${pr_num} --repo ${REPO}\`, check correctness, edge cases, error handling, code quality.
-
-**After reviewing, do BOTH:**
-1. Post your review to GitHub: \`gh pr review ${pr_num} --repo ${REPO} --approve --body \"your review summary\"\` (or \`--request-changes\`)
-2. Run the pipeline command:
-   - ✅ If good: \`~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT_NAME} approve ${issue_num}\`
-   - ❌ If changes needed: \`~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT_NAME} reject ${issue_num} \"reason\"\`
-
-**Do NOT skip either step.** The GitHub review creates a paper trail. The pipeline command triggers merge and deploy." "Pipeline" "$thread"
+A separate reviewer session will post results here. **Do NOT self-review or merge.**" "Pipeline" "$thread"
 
   set_issue "$issue_num" \
     "state=in-review" \
     "pr=$pr_num" \
     "pr_url=$pr_url" \
     "review_requested=$(timestamp)"
-  
-  echo "✅ PR #$pr_num posted for review in thread"
+
+  # Spawn an isolated reviewer session that posts results back via webhook
+  local pipeline_cmd="~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT_NAME}"
+  local review_prompt="You are an independent code reviewer. Review PR #${pr_num} for project '${PROJECT_NAME}' (repo: ${REPO}).
+
+## PR
+${pr_url}
+Issue: ${issue_url}
+
+## Instructions
+1. \`cd ${LOCAL_REPO_PATH:-~/projects/$PROJECT_NAME} && git fetch origin && gh pr diff ${pr_num}\`
+2. Check for project guidelines: CLAUDE.md, AGENTS.md, CONTRIBUTING.md
+3. Review for: correctness, edge cases, error handling, code quality, security
+4. Post your review to GitHub:
+   - If good: \`gh pr review ${pr_num} --repo ${REPO} --approve --body 'your summary'\`
+   - If changes needed: \`gh pr review ${pr_num} --repo ${REPO} --request-changes --body 'your feedback'\`
+5. Then run the pipeline command:
+   - If approved: \`${pipeline_cmd} approve ${issue_num}\`
+   - If rejected: \`${pipeline_cmd} reject ${issue_num} 'feedback summary'\`
+6. Post a summary to the worker thread:
+   \`~/.openclaw/workspace/scripts/notify-review-result.sh ${thread} 'your review summary'\`
+
+Be thorough but concise. You are NOT the author — give an independent review."
+
+  echo "🔍 Spawning isolated review session..."
+  spawn_session "pipeline-review-${issue_num}-${pr_num}" "$review_prompt" &
+
+  echo "✅ PR #$pr_num review session spawned"
 }
 
 cmd_approve() {
