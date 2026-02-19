@@ -2,7 +2,7 @@
 name: pipeline
 description: >
   Issue-to-PR pipeline orchestrator. Use when the user wants to create issues, assign work,
-  review PRs, or manage a development workflow. Triggers on "pipeline", "new issue", "new bug",
+  review PRs, or manage a development workflow. Triggers on "pipeline", "/issue", "new issue", "new bug",
   "log a bug", "log an issue", "assign issue", "pr ready", "approve pr", "reject pr",
   "pipeline status", "pipeline setup", "pipeline init". Also handles /pipeline slash command.
 user-invocable: true
@@ -10,10 +10,25 @@ user-invocable: true
 
 # Pipeline — Issue→PR Orchestrator
 
-State machine for the full issue→PR lifecycle. Each task spawns a FRESH isolated session.
+State machine for the full issue→PR lifecycle. Work happens in Discord forum threads — visible, interactive, and directly accessible to humans.
 
 Script: `{baseDir}/scripts/pipeline.sh`
 Projects: `{baseDir}/projects/<name>.conf`
+
+## How It Works
+
+The pipeline is a **notification router**, not a session manager. It posts @mentions via webhook to Discord threads, and the agent session listening in those threads picks up the work.
+
+| Step | What happens |
+|------|-------------|
+| `new` | Creates GitHub issue + Discord forum thread |
+| `assign` | Posts issue details to thread via webhook (@mentions agent) |
+| `pr-ready` | Posts review request to thread + notifies #pr-reviews |
+| `approve` | Merges PR, deploys, posts to #production, archives thread |
+| `reject` | Posts feedback to thread (@mentions agent to fix) |
+| `close` | Closes issue, notifies #pr-reviews + #production, archives thread |
+
+**Key principle:** The agent works directly in the thread. No hidden sessions, no spawned workers. Humans can follow along and intervene at any point.
 
 ## Slash Command Parsing
 
@@ -113,14 +128,31 @@ All require `-p <project>`:
 
 ```
 pipeline -p <proj> new "type: description"     # Create issue + forum thread
-pipeline -p <proj> assign <num>                # Spawn worker session
-pipeline -p <proj> pr-ready <num> --pr <pr>    # Spawn reviewer session
-pipeline -p <proj> approve <num>               # Merge + close + archive
-pipeline -p <proj> reject <num> "reason"       # Spawn fix session
-pipeline -p <proj> close <num>                 # Manual close
+pipeline -p <proj> new "bug: x" --no-auto-merge # Same but requires manual merge
+pipeline -p <proj> assign <num>                # Post to thread (@mention agent)
+pipeline -p <proj> pr-ready <num> --pr <pr>    # Post review request to thread
+pipeline -p <proj> approve <num>               # Merge + deploy + close + archive
+pipeline -p <proj> reject <num> "reason"       # Post feedback to thread
+pipeline -p <proj> close <num> "reason"        # Close + notify channels + archive
 pipeline -p <proj> status [num]                # Show issue state
 pipeline -p <proj> list [open|all]             # List issues
 ```
+
+## Per-Project Deploy Config
+
+Projects can define deploy steps in their `.conf`:
+
+```bash
+# Deploy steps (run after merge)
+DEPLOY_STEPS='cd /srv/myapp && git pull && docker-compose restart'
+
+# Post-deploy reminders
+DEPLOY_POST_NOTES="Remember to clear CDN cache after deploy."
+```
+
+When `approve` merges a PR and `DEPLOY_STEPS` is defined, the pipeline:
+1. Runs the deploy commands
+2. Posts success/failure to #production via webhook
 
 ## Admin Commands (no -p needed)
 
@@ -140,4 +172,4 @@ Prefix description: `bug:`, `feature:`, `task:`
 
 ## Dependencies
 
-`gh`, `jq`, `node`, `curl`, `openclaw` CLI, Discord bot token at `~/.config/discord/bot-token`
+`gh`, `jq`, `node`, `curl`, Discord bot token at `~/.config/discord/bot-token`

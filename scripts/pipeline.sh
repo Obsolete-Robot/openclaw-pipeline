@@ -81,14 +81,20 @@ get_issue() {
 set_issue() {
   local num="$1"; shift
   local tmp=$(mktemp)
-  local expr=".\"$num\" //= {}"
+  local content=$(cat "$STATE_FILE")
+  
+  # Build JSON object with all key=value pairs
+  local updates="{}"
   while [ $# -gt 0 ]; do
     local key="${1%%=*}"
     local val="${1#*=}"
-    expr="$expr | .\"$num\".$key = \"$val\""
+    updates=$(echo "$updates" | jq --arg k "$key" --arg v "$val" '. + {($k): $v}')
     shift
   done
-  jq "$expr" "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+  
+  # Merge updates into the issue entry
+  echo "$content" | jq --arg num "$num" --argjson updates "$updates" \
+    '.[$num] //= {} | .[$num] += $updates' > "$tmp" && mv "$tmp" "$STATE_FILE"
 }
 
 timestamp() { date -u +"%Y-%m-%dT%H:%M:%SZ"; }
@@ -108,6 +114,26 @@ webhook_post() {
     return 0
   else
     echo "❌ Webhook failed (HTTP $http_code)" >&2
+    return 1
+  fi
+}
+
+# Post as Larry bot (won't trigger self-response)
+# Use for status updates, results — anything Larry shouldn't react to
+bot_post() {
+  local channel_id="$1" msg="$2"
+  
+  local http_code
+  http_code=$(curl -s -w "%{http_code}" -o /dev/null -X POST \
+    "https://discord.com/api/v10/channels/${channel_id}/messages" \
+    -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg content "$msg" '{content: $content}')")
+  
+  if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+    return 0
+  else
+    echo "❌ Bot post failed (HTTP $http_code)" >&2
     return 1
   fi
 }
@@ -158,10 +184,20 @@ spawn_session() {
 # ============ COMMANDS ============
 
 cmd_new() {
-  local description="$1"
+  local description=""
+  local auto_merge="${DEFAULT_AUTO_MERGE:-true}"
+  
+  # Parse arguments
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --no-auto-merge) auto_merge="false"; shift ;;
+      --auto-merge) auto_merge="true"; shift ;;
+      *) description="$1"; shift ;;
+    esac
+  done
   
   if [ -z "$description" ]; then
-    echo "Usage: pipeline -p $PROJECT_NAME new \"bug: short description\""
+    echo "Usage: pipeline -p $PROJECT_NAME new \"bug: short description\" [--no-auto-merge]"
     exit 1
   fi
   
@@ -294,13 +330,63 @@ ${clean_desc}
     "url=$issue_url" \
     "branch=issue-${issue_num}" \
     "project=$PROJECT_NAME" \
+    "auto_merge=$auto_merge" \
     "created=$(timestamp)"
   
   echo ""
   echo "📌 Issue #$issue_num tracked"
   echo "🎯 Thread: https://discord.com/channels/$GUILD_ID/$thread_id"
+  
+  # Post issue summary to thread (wait for manual assign)
+  local thread_msg="📋 **Issue #${issue_num}: ${title}**
+${issue_url}
+
+${body}
+
+---
+**To assign:** \`pipeline -p ${PROJECT_NAME} assign ${issue_num}\`"
+
+  webhook_post "$FORUM_WEBHOOK_URL" "$thread_msg" "Pipeline" "$thread_id"
+  
   echo ""
-  echo "Next: pipeline -p $PROJECT_NAME assign $issue_num"
+  echo "Ready for assignment: pipeline -p $PROJECT_NAME assign $issue_num"
+}
+
+# Post issue details to thread via webhook, @mention Larry to pick it up.
+# No hidden sessions — Larry works in the thread, visible and interactive.
+_assign_to_thread() {
+  local issue_num="$1" title="$2" url="$3" body="$4" thread="$5"
+  local branch="issue-${issue_num}"
+  
+  # Extract first paragraph as description (up to first blank line or ## heading)
+  local description
+  description=$(echo "$body" | sed '/^$/q; /^##/q' | head -5 | sed '/^$/d; /^##/d')
+  [ -z "$description" ] && description="See issue for details."
+  
+  local pipeline_cmd="~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT_NAME}"
+  
+  local assign_msg="<@$LARRY_BOT_ID> **Issue #${issue_num}: ${title}**
+${url}
+
+${description}
+
+---
+⚠️ **Do the work yourself here. No sub-agents or branch workers.**
+Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
+After PR: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
+After review ✅: \`${pipeline_cmd} approve ${issue_num}\`
+After review ❌: fix, push, re-request.
+Already resolved? \`${pipeline_cmd} close ${issue_num} \"reason\"\`
+**Always use pipeline commands** for close/approve/reject — they handle notifications."
+
+  webhook_post "$FORUM_WEBHOOK_URL" "$assign_msg" "Pipeline" "$thread"
+  
+  set_issue "$issue_num" \
+    "state=assigned" \
+    "branch=$branch" \
+    "assigned=$(timestamp)"
+  
+  echo "✅ Issue #$issue_num posted to thread — Larry will pick it up"
 }
 
 cmd_assign() {
@@ -312,7 +398,6 @@ cmd_assign() {
   local thread=$(get_issue "$issue_num" "thread")
   local title=$(get_issue "$issue_num" "title")
   local url=$(get_issue "$issue_num" "url")
-  local branch=$(get_issue "$issue_num" "branch")
   
   [ -z "$thread" ] && { echo "❌ Issue #$issue_num not tracked"; exit 1; }
   
@@ -320,62 +405,8 @@ cmd_assign() {
   local body
   body=$(gh issue view "$issue_num" --repo "$REPO" --json body -q '.body' 2>/dev/null)
   
-  # Post a summary to the thread for visibility
-  local thread_msg="📋 **Issue #${issue_num} assigned**
-${url}
-
-Branch: \`${branch}\`
-Worker session: \`pipeline-worker-${issue_num}\`"
-
-  webhook_post "$FORUM_WEBHOOK_URL" "$thread_msg" "Pipeline" "$thread"
-  
-  # Spawn a FRESH session for the worker
-  local session_id="pipeline-worker-${issue_num}"
-  local worker_prompt="You are a developer working on project '${PROJECT_NAME}' (repo: ${REPO}).
-
-## Your Task
-Fix issue #${issue_num}: ${title}
-${url}
-
-## Issue Details
-${body}
-
-## Instructions
-1. Clone/fetch the repo and create branch \`${branch}\` from main
-2. Implement the fix
-3. Create a PR that closes #${issue_num}
-4. When the PR is created, run this command:
-   \`\`\`
-   pipeline -p ${PROJECT_NAME} pr-ready ${issue_num} --pr <PR_NUMBER>
-   \`\`\`
-
-## Constraints
-- Stay focused on this single issue
-- Commit messages should reference #${issue_num}
-- PR title format: '${title} (#${issue_num})'
-
-## Thread
-Post progress updates to Discord thread ${thread} using:
-\`\`\`
-~/.openclaw/workspace/skills/discord-notify/scripts/notify-thread.sh ${thread} \"your update message\"
-\`\`\`"
-
-  echo "🚀 Spawning worker session: $session_id"
-  
-  # Spawn in background — delivers reply to the forum thread when done
-  spawn_session "$session_id" "$worker_prompt" "$thread" &
-  local pid=$!
-  
-  set_issue "$issue_num" \
-    "state=assigned" \
-    "session=$session_id" \
-    "worker_pid=$pid" \
-    "assigned=$(timestamp)"
-  
-  echo "✅ Worker session spawned (PID $pid)"
-  echo "📡 Progress will post to thread automatically"
-  echo ""
-  echo "Monitor: pipeline -p $PROJECT_NAME status $issue_num"
+  # Post to thread via webhook — Larry picks it up and works in the open
+  _assign_to_thread "$issue_num" "$title" "$url" "$body" "$thread"
 }
 
 cmd_pr_ready() {
@@ -394,62 +425,41 @@ cmd_pr_ready() {
   
   local thread=$(get_issue "$issue_num" "thread")
   local title=$(get_issue "$issue_num" "title")
+  local auto_merge=$(get_issue "$issue_num" "auto_merge")
   [ -z "$thread" ] && { echo "❌ Issue #$issue_num not tracked"; exit 1; }
   
   local pr_url="https://github.com/${REPO}/pull/${pr_num}"
   
-  # Notify in review channel
-  local review_msg="🆕 **PR Ready for Review** [${PROJECT_NAME}]
-**Issue:** #${issue_num}: ${title}
-**PR:** ${pr_url}
-**Thread:** <#${thread}>"
+  # Post to #pr-reviews via webhook (informational)
+  webhook_post "$REVIEWS_WEBHOOK_URL" "📤 **PR #${pr_num}** — ${title}
+🔗 PR: ${pr_url}
+📋 Issue: https://github.com/${REPO}/issues/${issue_num}
+🧵 Thread: <#${thread}>
+Review in progress..." "Larry"
 
-  webhook_post "$REVIEWS_WEBHOOK_URL" "$review_msg" "Pipeline"
-  
-  # Update the forum thread
-  webhook_post "$FORUM_WEBHOOK_URL" "📤 PR #${pr_num} submitted for review: ${pr_url}" "Pipeline" "$thread"
-  
-  # Spawn a FRESH reviewer session
-  local session_id="pipeline-review-${issue_num}-${pr_num}"
-  local review_prompt="You are a code reviewer for project '${PROJECT_NAME}' (repo: ${REPO}).
+  # Post review request to thread via webhook — @mention Larry to do the review
+  local issue_url="https://github.com/${REPO}/issues/${issue_num}"
+  webhook_post "$FORUM_WEBHOOK_URL" "<@$LARRY_BOT_ID> **PR #${pr_num} ready for review**
+🔗 ${pr_url}
+📋 Issue #${issue_num}: ${issue_url}
 
-## Your Task
-Review PR #${pr_num}: ${title}
-${pr_url}
+**Review this PR yourself.** Fetch the diff with \`gh pr diff ${pr_num} --repo ${REPO}\`, check correctness, edge cases, error handling, code quality.
 
-## Instructions
-1. Fetch and review the PR diff
-2. Check for: correctness, edge cases, error handling, test coverage, code style
-3. Post your review summary
+**After reviewing, do BOTH:**
+1. Post your review to GitHub: \`gh pr review ${pr_num} --repo ${REPO} --approve --body \"your review summary\"\` (or \`--request-changes\`)
+2. Run the pipeline command:
+   - ✅ If good: \`~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT_NAME} approve ${issue_num}\`
+   - ❌ If changes needed: \`~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT_NAME} reject ${issue_num} \"reason\"\`
 
-## After Review
-If approved, run:
-\`\`\`
-pipeline -p ${PROJECT_NAME} approve ${issue_num}
-\`\`\`
+**Do NOT skip either step.** The GitHub review creates a paper trail. The pipeline command triggers merge and deploy." "Pipeline" "$thread"
 
-If changes needed, run:
-\`\`\`
-pipeline -p ${PROJECT_NAME} reject ${issue_num} \"<specific feedback>\"
-\`\`\`
-
-## Thread
-Post review notes to thread:
-\`\`\`
-~/.openclaw/workspace/skills/discord-notify/scripts/notify-thread.sh ${thread} \"your review notes\"
-\`\`\`"
-
-  echo "🔍 Spawning reviewer session: $session_id"
-  spawn_session "$session_id" "$review_prompt" "$thread" &
-  
   set_issue "$issue_num" \
     "state=in-review" \
     "pr=$pr_num" \
     "pr_url=$pr_url" \
-    "review_session=$session_id" \
     "review_requested=$(timestamp)"
   
-  echo "✅ Review requested for PR #$pr_num"
+  echo "✅ PR #$pr_num posted for review in thread"
 }
 
 cmd_approve() {
@@ -460,14 +470,48 @@ cmd_approve() {
   
   local thread=$(get_issue "$issue_num" "thread")
   local pr=$(get_issue "$issue_num" "pr")
+  local title=$(get_issue "$issue_num" "title")
+  local url=$(get_issue "$issue_num" "url")
+  local auto_merge=$(get_issue "$issue_num" "auto_merge")
   [ -z "$thread" ] && { echo "❌ Issue #$issue_num not tracked"; exit 1; }
   
-  webhook_post "$FORUM_WEBHOOK_URL" "✅ **PR #${pr} APPROVED** — Merging" "Pipeline" "$thread"
+  local pr_url="https://github.com/${REPO}/pull/${pr}"
   
-  echo "🔀 Merging PR #$pr..."
+  # Post GitHub approval
+  echo "✅ Approving PR #$pr on GitHub..."
+  gh pr review "$pr" --repo "$REPO" --approve --body "LGTM! ✅ Approved via pipeline review." 2>/dev/null || true
+  
+  # Post to #pr-reviews via webhook (informational)
+  webhook_post "$REVIEWS_WEBHOOK_URL" "✅ **PR #${pr} APPROVED** — ${title}
+🔗 ${pr_url} | 📋 Issue #${issue_num}
+$([ "$auto_merge" = "false" ] && echo "⏳ Manual merge required." || echo "🔀 Auto-merging to \`${MERGE_TARGET:-dev}\`...")" "Larry"
+  
+  if [ "$auto_merge" = "false" ]; then
+    webhook_post "$FORUM_WEBHOOK_URL" "<@$LARRY_BOT_ID> ✅ **PR #${pr} APPROVED**
+
+Review passed! Manual merge requested.
+When ready: \`gh pr merge ${pr} --repo ${REPO} --squash\`" "Pipeline" "$thread"
+    
+    set_issue "$issue_num" "state=approved" "approved=$(timestamp)"
+    echo "✅ PR #$pr approved (manual merge required)"
+    return
+  fi
+  
+  echo "🔀 Merging PR #$pr to ${MERGE_TARGET:-dev}..."
   if gh pr merge "$pr" --repo "$REPO" --squash --delete-branch 2>/dev/null; then
     echo "✅ PR #$pr merged"
+    
+    # Close the issue
     gh issue close "$issue_num" --repo "$REPO" --reason completed 2>/dev/null || true
+    
+    # Post as Larry (no response needed)
+    webhook_post "$FORUM_WEBHOOK_URL" "🎉 **Issue #${issue_num} RESOLVED**
+
+PR #${pr} merged to \`${MERGE_TARGET:-dev}\`
+Thread will be archived." "Pipeline" "$thread"
+    
+    # Archive thread and apply resolved tag
+    sleep 2  # Give time for the message to post
     archive_thread "$thread"
     
     if [ -n "${TAG_RESOLVED:-}" ]; then
@@ -478,11 +522,45 @@ cmd_approve() {
         -d "{\"applied_tags\": [\"$TAG_RESOLVED\"]}"
     fi
     
+    # Deploy if DEPLOY_STEPS defined
+    if [ -n "${DEPLOY_STEPS:-}" ]; then
+      echo "🚀 Running deploy steps..."
+      if eval "$DEPLOY_STEPS" 2>&1; then
+        echo "✅ Deploy successful"
+        
+        # Post to #production
+        if [ -n "${PRODUCTION_CHANNEL:-}" ]; then
+          local deploy_msg="🚀 **Deployed to dev:** #${issue_num} — ${title}
+PR #${pr} merged to \`${MERGE_TARGET:-dev}\`
+${pr_url}
+${DEPLOY_POST_NOTES:+
+📝 ${DEPLOY_POST_NOTES}}"
+          webhook_post "$PRODUCTION_WEBHOOK_URL" "$deploy_msg" "Larry"
+        fi
+      else
+        echo "⚠️  Deploy failed — posting manual instructions"
+        if [ -n "${PRODUCTION_CHANNEL:-}" ]; then
+          webhook_post "$PRODUCTION_WEBHOOK_URL" "⚠️ **Auto-deploy failed** for #${issue_num} — ${title}
+PR #${pr} merged but deploy needs manual intervention.
+\`\`\`bash
+${DEPLOY_STEPS}
+\`\`\`" "Larry"
+        fi
+      fi
+    fi
+    
     set_issue "$issue_num" "state=merged" "merged=$(timestamp)"
     echo "✅ Issue #$issue_num complete!"
   else
-    echo "⚠️  Auto-merge failed. Merge manually, then: pipeline -p $PROJECT_NAME close $issue_num"
-    set_issue "$issue_num" "state=approved"
+    echo "⚠️  Auto-merge failed (might need approvals or checks)"
+    
+    # Post as Larry (no response needed)
+    webhook_post "$FORUM_WEBHOOK_URL" "<@$LARRY_BOT_ID> ⚠️ **Auto-merge failed**
+
+PR #${pr} approved but merge failed. May need manual merge.
+Try: \`gh pr merge ${pr} --repo ${REPO} --squash\`" "Pipeline" "$thread"
+    
+    set_issue "$issue_num" "state=approved" "approved=$(timestamp)"
   fi
 }
 
@@ -495,56 +573,75 @@ cmd_reject() {
   
   local thread=$(get_issue "$issue_num" "thread")
   local pr=$(get_issue "$issue_num" "pr")
+  local title=$(get_issue "$issue_num" "title")
+  local url=$(get_issue "$issue_num" "url")
+  local branch=$(get_issue "$issue_num" "branch")
   [ -z "$thread" ] && { echo "❌ Issue #$issue_num not tracked"; exit 1; }
   
-  # Post rejection to thread
-  webhook_post "$FORUM_WEBHOOK_URL" "❌ **PR #${pr} — Changes Requested**
-
-${reason}" "Pipeline" "$thread"
+  local pr_url="https://github.com/${REPO}/pull/${pr}"
   
-  # Spawn a fresh fix session (don't reuse the old polluted one)
-  local session_id="pipeline-worker-${issue_num}-fix-$(date +%s)"
-  local body
-  body=$(gh issue view "$issue_num" --repo "$REPO" --json body -q '.body' 2>/dev/null)
+  # Post GitHub review requesting changes
+  echo "📝 Posting review feedback to GitHub..."
+  gh pr review "$pr" --repo "$REPO" --request-changes --body "$reason" 2>/dev/null || true
   
-  local fix_prompt="You are a developer working on project '${PROJECT_NAME}' (repo: ${REPO}).
-
-## Your Task
-Fix issue #${issue_num}: $(get_issue "$issue_num" "title")
-$(get_issue "$issue_num" "url")
-
-## Original Issue
-${body}
-
-## Review Feedback (changes requested)
-${reason}
-
-## Instructions
-1. Check out the existing branch \`$(get_issue "$issue_num" "branch")\`
-2. Address the review feedback above
-3. Push fixes and update the PR
-4. Run: \`pipeline -p ${PROJECT_NAME} pr-ready ${issue_num} --pr ${pr}\`
-
-## Thread
-Post updates: \`~/.openclaw/workspace/skills/discord-notify/scripts/notify-thread.sh ${thread} \"message\"\`"
-
-  echo "🔧 Spawning fix session: $session_id"
-  spawn_session "$session_id" "$fix_prompt" "$thread" &
+  # Post to #pr-reviews via webhook (informational)
+  webhook_post "$REVIEWS_WEBHOOK_URL" "❌ **PR #${pr} CHANGES REQUESTED** — ${title}
+🔗 ${pr_url} | 📋 Issue #${issue_num}
+**Feedback:** ${reason}" "Larry"
   
-  set_issue "$issue_num" "state=changes-requested" "session=$session_id" "rejected=$(timestamp)"
-  echo "✅ Fix session spawned"
+  # Post feedback to thread via webhook — @mention Larry to fix
+  webhook_post "$FORUM_WEBHOOK_URL" "<@$LARRY_BOT_ID> ❌ **PR #${pr} — Changes Requested**
+
+**Feedback:** ${reason}
+
+Please address the feedback and push fixes." "Pipeline" "$thread"
+  
+  set_issue "$issue_num" \
+    "state=changes-requested" \
+    "rejected=$(timestamp)" \
+    "reject_reason=$reason"
+  
+  echo "✅ Rejection posted to thread"
 }
 
 cmd_close() {
   local issue_num="$1"
-  [ -z "$issue_num" ] && { echo "Usage: pipeline -p $PROJECT_NAME close <issue_num>"; exit 1; }
+  local reason="${2:-Closed}"
+  [ -z "$issue_num" ] && { echo "Usage: pipeline -p $PROJECT_NAME close <issue_num> [reason]"; exit 1; }
   
   load_secrets
   
   local thread=$(get_issue "$issue_num" "thread")
+  local title=$(get_issue "$issue_num" "title")
+  local url=$(get_issue "$issue_num" "url")
+  
   gh issue close "$issue_num" --repo "$REPO" --reason completed 2>/dev/null || true
-  [ -n "$thread" ] && archive_thread "$thread" 2>/dev/null || true
-  set_issue "$issue_num" "state=closed" "closed=$(timestamp)"
+  
+  # Post to #pr-reviews (informational)
+  webhook_post "$REVIEWS_WEBHOOK_URL" "🔒 **Issue #${issue_num} closed** — ${title:-$url}
+${url:+$url}
+${reason}" "Larry"
+  
+  # Post to #production (visibility)
+  if [ -n "${PRODUCTION_WEBHOOK_URL:-}" ]; then
+    webhook_post "$PRODUCTION_WEBHOOK_URL" "🔒 **Issue #${issue_num} resolved** — ${title:-$url}
+${url:+$url}
+${reason}" "Larry"
+  fi
+  
+  # Archive thread
+  if [ -n "$thread" ]; then
+    archive_thread "$thread" 2>/dev/null || true
+    if [ -n "${TAG_RESOLVED:-}" ]; then
+      curl -s -o /dev/null -X PATCH \
+        "https://discord.com/api/v10/channels/$thread" \
+        -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"applied_tags\": [\"$TAG_RESOLVED\"]}"
+    fi
+  fi
+  
+  set_issue "$issue_num" "state=closed" "closed=$(timestamp)" "close_reason=$reason"
   echo "✅ Issue #$issue_num closed"
 }
 
@@ -618,6 +715,10 @@ TAG_RESOLVED=""
 # Agent overrides
 # WORKER_ID=""
 # REVIEWER_ID=""
+
+# Deploy steps (run after merge)
+# DEPLOY_STEPS='cd /srv/myapp && git pull && docker-compose restart'
+# DEPLOY_POST_NOTES="Remember to clear cache after deploy."
 CONF
 
   sed -i "s/__NAME__/$name/g" "$conf"
