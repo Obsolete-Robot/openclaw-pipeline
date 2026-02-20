@@ -321,12 +321,13 @@ spawn_session() {
   local session_id="$1"
   local message="$2"
   local deliver_thread="${3:-}"
+  local model="${4:-anthropic/claude-sonnet-4}"
   
   local args=(
     agent
     --session-id "$session_id"
     --message "$message"
-    --model "${AGENT_MODEL:-anthropic/claude-sonnet-4}"
+    --model "$model"
     --thinking "${AGENT_THINKING:-low}"
     --timeout "${AGENT_TIMEOUT:-600}"
   )
@@ -400,7 +401,7 @@ ${issue_type}: ${clean_desc}
 Repository: ${REPO}"
 
     local response
-    response=$(spawn_session "$session_id" "$prompt") || true
+    response=$(spawn_session "$session_id" "$prompt" "" "${SPEC_MODEL:-anthropic/claude-sonnet-4}") || true
     
     if [ -n "$response" ]; then
       title=$(echo "$response" | sed -n 's/^TITLE: *//p' | head -1)
@@ -675,7 +676,7 @@ Issue: ${issue_url}
 Be thorough but concise. You are NOT the author — give an independent review."
 
   echo "🔍 Spawning review session (after ${delay_sec}s delay for message ordering)..."
-  ( sleep "$delay_sec" && spawn_session "pipeline-review-${issue_num}-${pr_num}" "$review_prompt" ) &
+  ( sleep "$delay_sec" && spawn_session "pipeline-review-${issue_num}-${pr_num}" "$review_prompt" "" "${REVIEWER_MODEL:-anthropic/claude-sonnet-4}" ) &
 
   echo "✅ PR #$pr_num review queued"
 }
