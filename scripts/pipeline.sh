@@ -141,6 +141,31 @@ bot_post() {
 
 # ============ WORKER POOL ============
 
+WORKERS_STATE_FILE="$SKILL_DIR/projects/.workers.json"
+[ -f "$WORKERS_STATE_FILE" ] || echo '{}' > "$WORKERS_STATE_FILE"
+
+is_worker_paused() {
+  local wid="$1"
+  local paused
+  paused=$(jq -r --arg wid "$wid" '.[$wid].paused // false' "$WORKERS_STATE_FILE")
+  [ "$paused" = "true" ]
+}
+
+pause_worker() {
+  local wid="$1" reason="${2:-}"
+  local tmp=$(mktemp)
+  jq --arg wid "$wid" --arg reason "$reason" --arg ts "$(timestamp)" \
+    '.[$wid] = { paused: true, reason: $reason, since: $ts }' \
+    "$WORKERS_STATE_FILE" > "$tmp" && mv "$tmp" "$WORKERS_STATE_FILE"
+}
+
+unpause_worker() {
+  local wid="$1"
+  local tmp=$(mktemp)
+  jq --arg wid "$wid" '.[$wid] = { paused: false }' \
+    "$WORKERS_STATE_FILE" > "$tmp" && mv "$tmp" "$WORKERS_STATE_FILE"
+}
+
 # Get list of worker bot IDs (pool or single)
 get_worker_ids() {
   if [ -n "${WORKER_BOT_IDS:-}" ]; then
@@ -183,8 +208,15 @@ select_worker() {
   [ -z "$ids" ] && { echo ""; return; }
   
   local best_id="" best_count=999999 best_time="9999"
+  local available=0
   
   for wid in $ids; do
+    # Skip paused workers
+    if is_worker_paused "$wid"; then
+      continue
+    fi
+    available=$((available + 1))
+    
     local count
     count=$(count_active_for_worker "$wid")
     local last_time
@@ -197,6 +229,10 @@ select_worker() {
     fi
   done
   
+  if [ "$available" -eq 0 ]; then
+    echo "⚠️  All workers are on break!" >&2
+  fi
+  
   echo "$best_id"
 }
 
@@ -207,6 +243,15 @@ worker_status() {
   [ -z "$ids" ] && { echo "  (no workers configured)"; return; }
   
   for wid in $ids; do
+    if is_worker_paused "$wid"; then
+      local reason
+      reason=$(jq -r --arg wid "$wid" '.[$wid].reason // ""' "$WORKERS_STATE_FILE")
+      local since
+      since=$(jq -r --arg wid "$wid" '.[$wid].since // ""' "$WORKERS_STATE_FILE")
+      echo "  <@$wid> — on break ☕ ${reason:+($reason) }${since:+since $since}"
+      continue
+    fi
+    
     local count
     count=$(count_active_for_worker "$wid")
     local issues
@@ -951,6 +996,39 @@ cmd_workers() {
   worker_status
 }
 
+cmd_pause() {
+  local worker_id="$1"
+  local reason="${2:-}"
+  [ -z "$worker_id" ] && { echo "Usage: pipeline -p <proj> pause <worker_id> [reason]"; exit 1; }
+  
+  # Strip Discord mention syntax if present: <@123> → 123
+  worker_id=$(echo "$worker_id" | sed 's/^<@//; s/>$//')
+  
+  if is_worker_paused "$worker_id"; then
+    echo "☕ <@$worker_id> is already on break"
+    return
+  fi
+  
+  pause_worker "$worker_id" "$reason"
+  echo "☕ <@$worker_id> is now on break${reason:+ ($reason)}"
+  echo "They won't be assigned new issues until unpaused."
+}
+
+cmd_unpause() {
+  local worker_id="$1"
+  [ -z "$worker_id" ] && { echo "Usage: pipeline -p <proj> unpause <worker_id>"; exit 1; }
+  
+  worker_id=$(echo "$worker_id" | sed 's/^<@//; s/>$//')
+  
+  if ! is_worker_paused "$worker_id"; then
+    echo "✅ <@$worker_id> is already available"
+    return
+  fi
+  
+  unpause_worker "$worker_id"
+  echo "✅ <@$worker_id> is back on duty!"
+}
+
 # Set a config value in a project's .conf file
 # Usage: pipeline config <project> <KEY> <value>
 cmd_config() {
@@ -1156,6 +1234,8 @@ case "$CMD" in
     echo "  pipeline -p <proj> status [num]           Show issue state"
     echo "  pipeline -p <proj> list [open|all]        List issues"
     echo "  pipeline -p <proj> workers               Show worker pool status"
+    echo "  pipeline -p <proj> pause <id> [reason]  Put a worker on break"
+    echo "  pipeline -p <proj> unpause <id>         Bring a worker back"
     echo ""
     echo "Types: bug:, feature:, task: (prefix in description)"
     echo ""
@@ -1197,6 +1277,8 @@ case "$CMD" in
   status)     cmd_status "$@" ;;
   list)       cmd_list "$@" ;;
   workers)    cmd_workers ;;
+  pause|takeabreak|break) cmd_pause "$@" ;;
+  unpause|backtowork|resume) cmd_unpause "$@" ;;
   *)
     echo "Unknown command: $CMD"
     echo "Run: pipeline help"

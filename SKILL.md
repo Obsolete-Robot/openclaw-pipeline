@@ -48,6 +48,9 @@ Map user input to shell commands:
 | `/pipeline pr-ready myapp 42 87` | `pipeline -p myapp pr-ready 42 --pr 87` |
 | `/pipeline approve myapp 42` | `pipeline -p myapp approve 42` |
 | `/pipeline reject myapp 42 reason` | `pipeline -p myapp reject 42 "reason"` |
+| `/pipeline workers myapp` | `pipeline -p myapp workers` |
+| `/pipeline takeabreak myapp @Geordi` | `pipeline -p myapp pause <id>` |
+| `/pipeline backtowork myapp @Geordi` | `pipeline -p myapp unpause <id>` |
 
 Natural language works too:
 - "log a bug for myapp: panel doesn't resize" → `pipeline -p myapp new "bug: panel doesn't resize"`
