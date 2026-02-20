@@ -166,6 +166,23 @@ pipeline create-webhooks <name>     # Auto-create Discord webhooks
 pipeline fetch-tags <name>          # Auto-detect forum tags
 ```
 
+## Worker Pool
+
+Multiple bots can share the workload. Set `WORKER_BOT_IDS` in the project config (space-separated Discord user IDs):
+
+```bash
+pipeline config myapp WORKER_BOT_IDS "1467918736836268035 1234567890 9876543210"
+```
+
+On `assign`, the pipeline auto-selects the worker with the fewest active issues (oldest idle as tiebreaker). Each issue tracks which worker was assigned, so all subsequent @mentions (approve, reject, feedback) go to the right bot.
+
+Check pool status:
+```
+/pipeline workers myapp
+```
+
+Falls back to `LARRY_BOT_ID` if `WORKER_BOT_IDS` is empty (single-bot mode).
+
 ## Issue Types
 
 Prefix description: `bug:`, `feature:`, `task:`

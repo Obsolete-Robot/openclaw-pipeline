@@ -139,6 +139,103 @@ bot_post() {
   fi
 }
 
+# ============ WORKER POOL ============
+
+# Get list of worker bot IDs (pool or single)
+get_worker_ids() {
+  if [ -n "${WORKER_BOT_IDS:-}" ]; then
+    echo "$WORKER_BOT_IDS"
+  elif [ -n "${LARRY_BOT_ID:-}" ]; then
+    echo "$LARRY_BOT_ID"
+  else
+    echo ""
+  fi
+}
+
+# Count active (non-terminal) issues assigned to a specific worker
+count_active_for_worker() {
+  local worker_id="$1"
+  jq -r --arg wid "$worker_id" '
+    [to_entries[] |
+     select(.value.worker_bot == $wid) |
+     select(.value.state != "merged" and .value.state != "closed")
+    ] | length
+  ' "$STATE_FILE"
+}
+
+# Get the timestamp of the most recent assignment for a worker (for tiebreaking)
+last_assigned_for_worker() {
+  local worker_id="$1"
+  jq -r --arg wid "$worker_id" '
+    [to_entries[] |
+     select(.value.worker_bot == $wid) |
+     select(.value.assigned != null) |
+     .value.assigned
+    ] | sort | last // "1970-01-01T00:00:00Z"
+  ' "$STATE_FILE"
+}
+
+# Pick the most idle worker from the pool
+# Returns the bot ID with fewest active issues (oldest last-assignment as tiebreaker)
+select_worker() {
+  local ids
+  ids=$(get_worker_ids)
+  [ -z "$ids" ] && { echo ""; return; }
+  
+  local best_id="" best_count=999999 best_time="9999"
+  
+  for wid in $ids; do
+    local count
+    count=$(count_active_for_worker "$wid")
+    local last_time
+    last_time=$(last_assigned_for_worker "$wid")
+    
+    if [ "$count" -lt "$best_count" ] || { [ "$count" -eq "$best_count" ] && [[ "$last_time" < "$best_time" ]]; }; then
+      best_id="$wid"
+      best_count="$count"
+      best_time="$last_time"
+    fi
+  done
+  
+  echo "$best_id"
+}
+
+# Show worker pool status
+worker_status() {
+  local ids
+  ids=$(get_worker_ids)
+  [ -z "$ids" ] && { echo "  (no workers configured)"; return; }
+  
+  for wid in $ids; do
+    local count
+    count=$(count_active_for_worker "$wid")
+    local issues
+    issues=$(jq -r --arg wid "$wid" '
+      [to_entries[] |
+       select(.value.worker_bot == $wid) |
+       select(.value.state != "merged" and .value.state != "closed") |
+       "#\(.key)(\(.value.state))"
+      ] | join(", ")
+    ' "$STATE_FILE")
+    
+    if [ "$count" -eq 0 ]; then
+      echo "  <@$wid> — idle ✅"
+    else
+      echo "  <@$wid> — $count active: $issues"
+    fi
+  done
+}
+
+# Get the worker assigned to an issue (falls back to LARRY_BOT_ID)
+get_issue_worker() {
+  local issue_num="$1"
+  local worker=$(get_issue "$issue_num" "worker_bot")
+  if [ -z "$worker" ]; then
+    worker="${LARRY_BOT_ID:-}"
+  fi
+  echo "$worker"
+}
+
 create_forum_thread() {
   local title="$1" content="$2" tag_id="${3:-}"
   local args=("$FORUM_CHANNEL" --name "$title" --content "$content")
@@ -310,6 +407,23 @@ _assign_to_thread() {
   local issue_num="$1" title="$2" url="$3" body="$4" thread="$5"
   local branch="issue-${issue_num}"
   
+  # Select worker from pool (most idle)
+  local worker_id
+  worker_id=$(select_worker)
+  if [ -z "$worker_id" ]; then
+    echo "❌ No workers configured. Set WORKER_BOT_IDS or LARRY_BOT_ID in config."
+    exit 1
+  fi
+  
+  local pool_ids
+  pool_ids=$(get_worker_ids)
+  local pool_count=$(echo "$pool_ids" | wc -w)
+  if [ "$pool_count" -gt 1 ]; then
+    local active_count
+    active_count=$(count_active_for_worker "$worker_id")
+    echo "🤖 Selected worker <@$worker_id> ($active_count active issues, pool of $pool_count)"
+  fi
+  
   # Extract first paragraph as description (up to first blank line or ## heading)
   local description
   description=$(echo "$body" | sed '/^$/q; /^##/q' | head -5 | sed '/^$/d; /^##/d')
@@ -319,7 +433,7 @@ _assign_to_thread() {
   
   local worktree_dir="${REPO##*/}-${branch}"
   
-  local assign_msg="<@$LARRY_BOT_ID> **Issue #${issue_num}: ${title}**
+  local assign_msg="<@$worker_id> **Issue #${issue_num}: ${title}**
 ${url}
 
 ${description}
@@ -354,9 +468,10 @@ cd ~/projects/${worktree_dir}
   set_issue "$issue_num" \
     "state=assigned" \
     "branch=$branch" \
+    "worker_bot=$worker_id" \
     "assigned=$(timestamp)"
   
-  echo "✅ Issue #$issue_num posted to thread — Larry will pick it up"
+  echo "✅ Issue #$issue_num assigned to worker <@$worker_id>"
 }
 
 cmd_assign() {
@@ -530,7 +645,8 @@ cmd_approve() {
 $([ "$auto_merge" = "false" ] && echo "⏳ Manual merge required." || echo "🔀 Auto-merging to \`${MERGE_TARGET:-dev}\`...")" "Larry"
   
   if [ "$auto_merge" = "false" ]; then
-    webhook_post "$FORUM_WEBHOOK_URL" "<@$LARRY_BOT_ID> ✅ **PR #${pr} APPROVED**
+    local issue_worker=$(get_issue_worker "$issue_num")
+    webhook_post "$FORUM_WEBHOOK_URL" "<@$issue_worker> ✅ **PR #${pr} APPROVED**
 
 Review passed! Manual merge requested.
 When ready: \`gh pr merge ${pr} --repo ${REPO} --squash\`" "Pipeline" "$thread"
@@ -598,7 +714,8 @@ ${DEPLOY_STEPS}
     echo "⚠️  Auto-merge failed (might need approvals or checks)"
     
     # Post as Larry (no response needed)
-    webhook_post "$FORUM_WEBHOOK_URL" "<@$LARRY_BOT_ID> ⚠️ **Auto-merge failed**
+    local issue_worker=$(get_issue_worker "$issue_num")
+    webhook_post "$FORUM_WEBHOOK_URL" "<@$issue_worker> ⚠️ **Auto-merge failed**
 
 PR #${pr} approved but merge failed. May need manual merge.
 Try: \`gh pr merge ${pr} --repo ${REPO} --squash\`" "Pipeline" "$thread"
@@ -632,8 +749,9 @@ cmd_reject() {
 🔗 ${pr_url} | 📋 Issue #${issue_num}
 **Feedback:** ${reason}" "Larry"
   
-  # Post feedback to thread via webhook — @mention Larry to fix
-  webhook_post "$FORUM_WEBHOOK_URL" "<@$LARRY_BOT_ID> ❌ **PR #${pr} — Changes Requested**
+  # Post feedback to thread via webhook — @mention assigned worker to fix
+  local issue_worker=$(get_issue_worker "$issue_num")
+  webhook_post "$FORUM_WEBHOOK_URL" "<@$issue_worker> ❌ **PR #${pr} — Changes Requested**
 
 **Feedback:** ${reason}
 
@@ -826,6 +944,11 @@ cmd_setup() {
 cmd_projects() {
   echo "📦 Projects:"
   list_projects
+}
+
+cmd_workers() {
+  echo "🤖 Worker pool [$PROJECT_NAME]:"
+  worker_status
 }
 
 # Set a config value in a project's .conf file
@@ -1032,6 +1155,7 @@ case "$CMD" in
     echo "  pipeline -p <proj> close <num>            Manual close"
     echo "  pipeline -p <proj> status [num]           Show issue state"
     echo "  pipeline -p <proj> list [open|all]        List issues"
+    echo "  pipeline -p <proj> workers               Show worker pool status"
     echo ""
     echo "Types: bug:, feature:, task: (prefix in description)"
     echo ""
@@ -1072,6 +1196,7 @@ case "$CMD" in
   close)      cmd_close "$@" ;;
   status)     cmd_status "$@" ;;
   list)       cmd_list "$@" ;;
+  workers)    cmd_workers ;;
   *)
     echo "Unknown command: $CMD"
     echo "Run: pipeline help"
