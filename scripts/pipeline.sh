@@ -326,6 +326,7 @@ spawn_session() {
     agent
     --session-id "$session_id"
     --message "$message"
+    --model "${AGENT_MODEL:-anthropic/claude-sonnet-4}"
     --thinking "${AGENT_THINKING:-low}"
     --timeout "${AGENT_TIMEOUT:-600}"
   )
