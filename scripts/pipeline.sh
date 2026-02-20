@@ -119,8 +119,8 @@ webhook_post() {
   fi
 }
 
-# Post as Larry bot (won't trigger self-response)
-# Use for status updates, results — anything Larry shouldn't react to
+# Post as Pipeline bot (won't trigger self-response)
+# Use for status updates, results — anything Pipeline shouldn't react to
 bot_post() {
   local channel_id="$1" msg="$2"
   
@@ -145,8 +145,8 @@ bot_post() {
 get_worker_ids() {
   if [ -n "${WORKER_BOT_IDS:-}" ]; then
     echo "$WORKER_BOT_IDS"
-  elif [ -n "${LARRY_BOT_ID:-}" ]; then
-    echo "$LARRY_BOT_ID"
+  elif [ -n "${DEFAULT_WORKER_ID:-}" ]; then
+    echo "$DEFAULT_WORKER_ID"
   else
     echo ""
   fi
@@ -226,12 +226,12 @@ worker_status() {
   done
 }
 
-# Get the worker assigned to an issue (falls back to LARRY_BOT_ID)
+# Get the worker assigned to an issue (falls back to DEFAULT_WORKER_ID)
 get_issue_worker() {
   local issue_num="$1"
   local worker=$(get_issue "$issue_num" "worker_bot")
   if [ -z "$worker" ]; then
-    worker="${LARRY_BOT_ID:-}"
+    worker="${DEFAULT_WORKER_ID:-}"
   fi
   echo "$worker"
 }
@@ -401,8 +401,8 @@ ${clean_desc}
   cmd_assign "$issue_num"
 }
 
-# Post issue details to thread via webhook, @mention Larry to pick it up.
-# No hidden sessions — Larry works in the thread, visible and interactive.
+# Post issue details to thread via webhook, @mention Pipeline to pick it up.
+# No hidden sessions — Pipeline works in the thread, visible and interactive.
 _assign_to_thread() {
   local issue_num="$1" title="$2" url="$3" body="$4" thread="$5"
   local branch="issue-${issue_num}"
@@ -411,7 +411,7 @@ _assign_to_thread() {
   local worker_id
   worker_id=$(select_worker)
   if [ -z "$worker_id" ]; then
-    echo "❌ No workers configured. Set WORKER_BOT_IDS or LARRY_BOT_ID in config."
+    echo "❌ No workers configured. Set WORKER_BOT_IDS or DEFAULT_WORKER_ID in config."
     exit 1
   fi
   
@@ -542,7 +542,7 @@ cmd_assign() {
       "created=$(timestamp)"
   fi
   
-  # Post to thread via webhook — Larry picks it up and works in the open
+  # Post to thread via webhook — Pipeline picks it up and works in the open
   _assign_to_thread "$issue_num" "$title" "$url" "$body" "$thread"
 }
 
@@ -574,7 +574,7 @@ cmd_pr_ready() {
 🔗 PR: ${pr_url}
 📋 Issue: ${issue_url}
 🧵 Thread: <#${thread}>
-Review in progress..." "Larry"
+Review in progress..." "Pipeline"
 
   # Notify the worker's thread that review is underway
   webhook_post "$FORUM_WEBHOOK_URL" "📤 **PR #${pr_num} submitted — review in progress.**
@@ -642,7 +642,7 @@ cmd_approve() {
   # Post to #pr-reviews via webhook (informational)
   webhook_post "$REVIEWS_WEBHOOK_URL" "✅ **PR #${pr} APPROVED** — ${title}
 🔗 ${pr_url} | 📋 Issue #${issue_num}
-$([ "$auto_merge" = "false" ] && echo "⏳ Manual merge required." || echo "🔀 Auto-merging to \`${MERGE_TARGET:-dev}\`...")" "Larry"
+$([ "$auto_merge" = "false" ] && echo "⏳ Manual merge required." || echo "🔀 Auto-merging to \`${MERGE_TARGET:-dev}\`...")" "Pipeline"
   
   if [ "$auto_merge" = "false" ]; then
     local issue_worker=$(get_issue_worker "$issue_num")
@@ -663,7 +663,7 @@ When ready: \`gh pr merge ${pr} --repo ${REPO} --squash\`" "Pipeline" "$thread"
     # Close the issue
     gh issue close "$issue_num" --repo "$REPO" --reason completed 2>/dev/null || true
     
-    # Post as Larry (no response needed)
+    # Post as Pipeline (no response needed)
     webhook_post "$FORUM_WEBHOOK_URL" "🎉 **Issue #${issue_num} RESOLVED**
 
 PR #${pr} merged to \`${MERGE_TARGET:-dev}\`
@@ -694,7 +694,7 @@ PR #${pr} merged to \`${MERGE_TARGET:-dev}\`
 ${pr_url}
 ${DEPLOY_POST_NOTES:+
 📝 ${DEPLOY_POST_NOTES}}"
-          webhook_post "$PRODUCTION_WEBHOOK_URL" "$deploy_msg" "Larry"
+          webhook_post "$PRODUCTION_WEBHOOK_URL" "$deploy_msg" "Pipeline"
         fi
       else
         echo "⚠️  Deploy failed — posting manual instructions"
@@ -703,7 +703,7 @@ ${DEPLOY_POST_NOTES:+
 PR #${pr} merged but deploy needs manual intervention.
 \`\`\`bash
 ${DEPLOY_STEPS}
-\`\`\`" "Larry"
+\`\`\`" "Pipeline"
         fi
       fi
     fi
@@ -713,7 +713,7 @@ ${DEPLOY_STEPS}
   else
     echo "⚠️  Auto-merge failed (might need approvals or checks)"
     
-    # Post as Larry (no response needed)
+    # Post as Pipeline (no response needed)
     local issue_worker=$(get_issue_worker "$issue_num")
     webhook_post "$FORUM_WEBHOOK_URL" "<@$issue_worker> ⚠️ **Auto-merge failed**
 
@@ -747,7 +747,7 @@ cmd_reject() {
   # Post to #pr-reviews via webhook (informational)
   webhook_post "$REVIEWS_WEBHOOK_URL" "❌ **PR #${pr} CHANGES REQUESTED** — ${title}
 🔗 ${pr_url} | 📋 Issue #${issue_num}
-**Feedback:** ${reason}" "Larry"
+**Feedback:** ${reason}" "Pipeline"
   
   # Post feedback to thread via webhook — @mention assigned worker to fix
   local issue_worker=$(get_issue_worker "$issue_num")
@@ -781,13 +781,13 @@ cmd_close() {
   # Post to #pr-reviews (informational)
   webhook_post "$REVIEWS_WEBHOOK_URL" "🔒 **Issue #${issue_num} closed** — ${title:-$url}
 ${url:+$url}
-${reason}" "Larry"
+${reason}" "Pipeline"
   
   # Post to #production (visibility)
   if [ -n "${PRODUCTION_WEBHOOK_URL:-}" ]; then
     webhook_post "$PRODUCTION_WEBHOOK_URL" "🔒 **Issue #${issue_num} resolved** — ${title:-$url}
 ${url:+$url}
-${reason}" "Larry"
+${reason}" "Pipeline"
   fi
   
   # Archive thread

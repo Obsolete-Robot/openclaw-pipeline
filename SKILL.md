@@ -181,7 +181,7 @@ Check pool status:
 /pipeline workers myapp
 ```
 
-Falls back to `LARRY_BOT_ID` if `WORKER_BOT_IDS` is empty (single-bot mode).
+Falls back to `DEFAULT_WORKER_ID` if `WORKER_BOT_IDS` is empty (single-bot mode).
 
 ## Issue Types
 
