@@ -499,6 +499,12 @@ ${url}
 ${description}
 
 ---
+📚 **PROJECT CONTEXT — Read these first (if they exist in the repo):**
+- \`.github/PIPELINE.md\` — project overview, coding standards, deploy process, gotchas
+- \`CLAUDE.md\` / \`AGENTS.md\` — AI-specific coding guidelines
+- \`CONTRIBUTING.md\` — contribution conventions
+
+---
 ⚠️ **RULES — you MUST follow this process:**
 
 **🌲 WORKTREE REQUIRED — DO NOT work in the main repo checkout!**
@@ -510,14 +516,15 @@ cd ~/projects/${worktree_dir}
 \`\`\`
 ⚠️ You MUST work in \`~/projects/${worktree_dir}/\` for this issue. Never commit in the main repo directory. Other workers are using it simultaneously. When done, clean up: \`git worktree remove ~/projects/${worktree_dir}\`
 
-1. Do the work yourself here. No sub-agents or branch workers.
-2. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
-3. After creating PR, run: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
-4. Post a summary of what you built and what changed.
-5. A separate reviewer will post results to this thread. Wait for their feedback.
-6. If review ❌: fix the issues, push, then run pr-ready again.
-7. If review ✅: the reviewer handles merge and deploy. You're done.
-8. If already resolved/duplicate: \`${pipeline_cmd} close ${issue_num} \"reason\"\`
+1. **Read project context files first** (listed above). Understand the codebase before coding.
+2. Do the work yourself here. No sub-agents or branch workers.
+3. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
+4. After creating PR, run: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
+5. Post a summary of what you built and what changed.
+6. A separate reviewer will post results to this thread. Wait for their feedback.
+7. If review ❌: fix the issues, push, then run pr-ready again.
+8. If review ✅: the reviewer handles merge and deploy. You're done.
+9. If already resolved/duplicate: \`${pipeline_cmd} close ${issue_num} \"reason\"\`
 
 **🚫 Do NOT run \`approve\`, \`gh pr merge\`, \`gh issue close\`, or self-review.**
 **🚫 The worker NEVER approves or merges their own PR.**
@@ -636,24 +643,44 @@ cmd_pr_ready() {
 🧵 Thread: <#${thread}>
 Review in progress..." "Pipeline"
 
-  # Notify the worker's thread that review is underway
-  webhook_post "$FORUM_WEBHOOK_URL" "📤 **PR #${pr_num} submitted — review in progress.**
-🔗 ${pr_url}
-A separate reviewer session will post results here. **Do NOT self-review or merge.**" "Pipeline" "$thread"
-
   set_issue "$issue_num" \
     "state=in-review" \
     "pr=$pr_num" \
     "pr_url=$pr_url" \
     "review_requested=$(timestamp)"
 
-  # Delay reviewer spawn so the worker's current turn finishes posting first.
-  # Without this, the reviewer fires immediately and its results appear
-  # in the middle of the worker's queued messages — scrambling the timeline.
-  local delay_sec="${REVIEW_DELAY_SEC:-30}"
-  
+  # Route review through the orchestrator bot in-thread.
+  # The orchestrator sees the @mention, picks up the review request,
+  # and runs the pr-review skill (or spawns a sub-agent for it).
+  # This means worker bots don't need the review skill themselves.
+  local orchestrator_id="${ORCHESTRATOR_ID:-}"
   local pipeline_cmd="~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT_NAME}"
-  local review_prompt="You are an independent code reviewer. Review PR #${pr_num} for project '${PROJECT_NAME}' (repo: ${REPO}).
+
+  if [ -n "$orchestrator_id" ]; then
+    # @mention orchestrator in the thread with structured review request
+    webhook_post "$FORUM_WEBHOOK_URL" "<@$orchestrator_id> 📤 **Review requested: PR #${pr_num}**
+
+🔗 PR: ${pr_url}
+📋 Issue: ${issue_url}
+📦 Repo: \`${REPO}\`
+🎯 Project: \`${PROJECT_NAME}\`
+🔢 Issue: \`${issue_num}\`
+
+**Please review this PR.** Check \`.github/PIPELINE.md\`, \`CLAUDE.md\`, and project guidelines.
+
+After review:
+- ✅ Approve: \`${pipeline_cmd} approve ${issue_num}\`
+- ❌ Reject: \`${pipeline_cmd} reject ${issue_num} 'feedback'\`" "Pipeline" "$thread"
+
+    echo "✅ PR #$pr_num review requested — orchestrator pinged in thread"
+  else
+    # Fallback: spawn review session directly (legacy behavior)
+    webhook_post "$FORUM_WEBHOOK_URL" "📤 **PR #${pr_num} submitted — review in progress.**
+🔗 ${pr_url}
+A separate reviewer session will post results here. **Do NOT self-review or merge.**" "Pipeline" "$thread"
+
+    local delay_sec="${REVIEW_DELAY_SEC:-30}"
+    local review_prompt="You are an independent code reviewer. Review PR #${pr_num} for project '${PROJECT_NAME}' (repo: ${REPO}).
 
 ## PR
 ${pr_url}
@@ -661,7 +688,7 @@ Issue: ${issue_url}
 
 ## Instructions
 1. \`cd ${LOCAL_REPO_PATH:-~/projects/$PROJECT_NAME} && git fetch origin && gh pr diff ${pr_num}\`
-2. Check for project guidelines: CLAUDE.md, AGENTS.md, CONTRIBUTING.md
+2. Check for project guidelines: .github/PIPELINE.md, CLAUDE.md, AGENTS.md, CONTRIBUTING.md
 3. Review for: correctness, edge cases, error handling, code quality, security
 4. Post your review to GitHub:
    - If good: \`gh pr review ${pr_num} --repo ${REPO} --approve --body 'your summary'\`
@@ -674,10 +701,11 @@ Issue: ${issue_url}
 
 Be thorough but concise. You are NOT the author — give an independent review."
 
-  echo "🔍 Spawning review session (after ${delay_sec}s delay for message ordering)..."
-  ( sleep "$delay_sec" && spawn_session "pipeline-review-${issue_num}-${pr_num}" "$review_prompt" ) &
+    echo "🔍 Spawning review session (after ${delay_sec}s delay for message ordering)..."
+    ( sleep "$delay_sec" && spawn_session "pipeline-review-${issue_num}-${pr_num}" "$review_prompt" ) &
 
-  echo "✅ PR #$pr_num review queued"
+    echo "✅ PR #$pr_num review queued (legacy spawn — set ORCHESTRATOR_ID to use in-thread routing)"
+  fi
 }
 
 cmd_approve() {
@@ -947,10 +975,19 @@ CONF
   
   echo "✅ Project '$name' created at $conf"
   echo ""
+  echo "📋 A PIPELINE.md template is available at:"
+  echo "   $SKILL_DIR/templates/PIPELINE.md"
+  echo ""
+  echo "Copy it to your repo's .github/ directory and customize it:"
+  echo "   cp $SKILL_DIR/templates/PIPELINE.md /path/to/repo/.github/PIPELINE.md"
+  echo ""
+  echo "This gives worker bots project context (coding standards, deploy process, gotchas)."
+  echo ""
   echo "Next steps:"
   echo "  1. Edit $conf — fill in REPO, GUILD_ID, channel IDs"
   echo "  2. Create webhooks and save URLs to the webhook files"
-  echo "  3. Run: pipeline setup $name"
+  echo "  3. Copy PIPELINE.md template to your repo"
+  echo "  4. Run: pipeline setup $name"
 }
 
 cmd_setup() {

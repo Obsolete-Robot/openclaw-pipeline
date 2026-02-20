@@ -22,13 +22,32 @@ The pipeline is a **notification router**, not a session manager. It posts @ment
 | Step | What happens |
 |------|-------------|
 | `new` | Creates GitHub issue + Discord forum thread |
-| `assign` | Posts issue details to thread via webhook (@mentions agent) |
-| `pr-ready` | Posts review request to thread + notifies #pr-reviews |
+| `assign` | Posts issue details + repo context pointers to thread via webhook (@mentions worker) |
+| `pr-ready` | @mentions orchestrator in thread for review (or spawns review session as fallback) |
 | `approve` | Merges PR, deploys, posts to #production, archives thread |
-| `reject` | Posts feedback to thread (@mentions agent to fix) |
+| `reject` | Posts feedback to thread (@mentions worker to fix) |
 | `close` | Closes issue, notifies #pr-reviews + #production, archives thread |
 
 **Key principle:** The agent works directly in the thread. No hidden sessions, no spawned workers. Humans can follow along and intervene at any point.
+
+## Worker Onboarding Context
+
+Worker bots are pointed at **repo-level context files** when assigned an issue:
+
+- `.github/PIPELINE.md` — project overview, coding standards, deploy process, gotchas
+- `CLAUDE.md` / `AGENTS.md` — AI-specific coding guidelines
+- `CONTRIBUTING.md` — contribution conventions
+
+A template for `.github/PIPELINE.md` is at `{baseDir}/templates/PIPELINE.md`. Copy it to your repo and customize it. This ensures any worker bot — even one with no prior knowledge of the project — knows the rules.
+
+## Orchestrator-Routed PR Review
+
+When `ORCHESTRATOR_ID` is set in config, `pr-ready` @mentions the orchestrator bot in the thread instead of spawning a review session directly. This means:
+
+- **Worker bots don't need the review skill** — they just call `pr-ready`
+- **The orchestrator runs the review** (via pr-review skill or sub-agent)
+- **Everything happens in-thread** — visible and auditable
+- **Fallback:** If `ORCHESTRATOR_ID` is not set, falls back to spawning a review session directly (legacy behavior)
 
 ## Slash Command Parsing
 
