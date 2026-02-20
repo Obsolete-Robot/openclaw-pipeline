@@ -519,7 +519,10 @@ cd ~/projects/${worktree_dir}
 1. **Read project context files first** (listed above). Understand the codebase before coding.
 2. Do the work yourself here. No sub-agents or branch workers.
 3. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
-4. After creating PR, run: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
+4. After creating PR, request a review using **one of**:
+   - \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\` (if pipeline is installed)
+   - \`~/.openclaw/workspace/skills/pipeline/scripts/request-review.sh ${PROJECT_NAME} ${issue_num} <N> ${thread}\` (standalone, just needs curl)
+   - Or post in this thread asking for a review (orchestrator will pick it up)
 5. Post a summary of what you built and what changed.
 6. A separate reviewer will post results to this thread. Wait for their feedback.
 7. If review ❌: fix the issues, push, then run pr-ready again.
@@ -649,30 +652,16 @@ Review in progress..." "Pipeline"
     "pr_url=$pr_url" \
     "review_requested=$(timestamp)"
 
-  # Route review through the orchestrator bot in-thread.
-  # The orchestrator sees the @mention, picks up the review request,
-  # and runs the pr-review skill (or spawns a sub-agent for it).
-  # This means worker bots don't need the review skill themselves.
+  # Route review through the orchestrator bot via webhook.
+  # MUST use webhook (not bot message) so the @mention triggers the orchestrator
+  # even if the orchestrator IS the same bot as the worker.
+  # Webhook posts come from a different author — so the bot sees the mention.
+  
   local orchestrator_id="${ORCHESTRATOR_ID:-}"
-  local pipeline_cmd="~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT_NAME}"
 
   if [ -n "$orchestrator_id" ]; then
-    # @mention orchestrator in the thread with structured review request
-    webhook_post "$FORUM_WEBHOOK_URL" "<@$orchestrator_id> 📤 **Review requested: PR #${pr_num}**
-
-🔗 PR: ${pr_url}
-📋 Issue: ${issue_url}
-📦 Repo: \`${REPO}\`
-🎯 Project: \`${PROJECT_NAME}\`
-🔢 Issue: \`${issue_num}\`
-
-**Please review this PR.** Check \`.github/PIPELINE.md\`, \`CLAUDE.md\`, and project guidelines.
-
-After review:
-- ✅ Approve: \`${pipeline_cmd} approve ${issue_num}\`
-- ❌ Reject: \`${pipeline_cmd} reject ${issue_num} 'feedback'\`" "Pipeline" "$thread"
-
-    echo "✅ PR #$pr_num review requested — orchestrator pinged in thread"
+    # Use the standalone request-review.sh (webhook-based, works for any caller)
+    "$SCRIPT_DIR/request-review.sh" "$PROJECT_NAME" "$issue_num" "$pr_num" "$thread"
   else
     # Fallback: spawn review session directly (legacy behavior)
     webhook_post "$FORUM_WEBHOOK_URL" "📤 **PR #${pr_num} submitted — review in progress.**
@@ -680,6 +669,7 @@ After review:
 A separate reviewer session will post results here. **Do NOT self-review or merge.**" "Pipeline" "$thread"
 
     local delay_sec="${REVIEW_DELAY_SEC:-30}"
+    local pipeline_cmd="~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT_NAME}"
     local review_prompt="You are an independent code reviewer. Review PR #${pr_num} for project '${PROJECT_NAME}' (repo: ${REPO}).
 
 ## PR
