@@ -317,6 +317,8 @@ _assign_to_thread() {
   
   local pipeline_cmd="~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT_NAME}"
   
+  local worktree_dir="${REPO##*/}-${branch}"
+  
   local assign_msg="<@$LARRY_BOT_ID> **Issue #${issue_num}: ${title}**
 ${url}
 
@@ -324,6 +326,16 @@ ${description}
 
 ---
 ⚠️ **RULES — you MUST follow this process:**
+
+**🌲 WORKTREE REQUIRED — DO NOT work in the main repo checkout!**
+\`\`\`bash
+cd ~/projects/${REPO##*/}
+git fetch origin
+git worktree add ../${worktree_dir} -b ${branch} origin/${MERGE_TARGET:-dev}
+cd ~/projects/${worktree_dir}
+\`\`\`
+⚠️ You MUST work in \`~/projects/${worktree_dir}/\` for this issue. Never commit in the main repo directory. Other workers are using it simultaneously. When done, clean up: \`git worktree remove ~/projects/${worktree_dir}\`
+
 1. Do the work yourself here. No sub-agents or branch workers.
 2. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
 3. After creating PR, run: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
@@ -331,10 +343,11 @@ ${description}
 5. A separate reviewer will post results to this thread. Wait for their feedback.
 6. If review ❌: fix the issues, push, then run pr-ready again.
 7. If review ✅: the reviewer handles merge and deploy. You're done.
-7. If already resolved/duplicate: \`${pipeline_cmd} close ${issue_num} \"reason\"\`
+8. If already resolved/duplicate: \`${pipeline_cmd} close ${issue_num} \"reason\"\`
 
 **🚫 Do NOT run \`approve\`, \`gh pr merge\`, \`gh issue close\`, or self-review.**
-**🚫 The worker NEVER approves or merges their own PR.**"
+**🚫 The worker NEVER approves or merges their own PR.**
+**🚫 Do NOT work in \`~/projects/${REPO##*/}/\` directly — use your worktree!**"
 
   webhook_post "$FORUM_WEBHOOK_URL" "$assign_msg" "Pipeline" "$thread"
   
