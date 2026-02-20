@@ -59,17 +59,25 @@ PR_URL="https://github.com/${REPO}/pull/${PR_NUM}"
 ISSUE_URL="https://github.com/${REPO}/issues/${ISSUE_NUM}"
 
 # Post review request via webhook (@mention orchestrator)
+PIPELINE_CMD="~/.openclaw/workspace/skills/pipeline/scripts/pipeline.sh -p ${PROJECT}"
+
 MSG="<@${ORCHESTRATOR_ID}> 📤 **Review requested: PR #${PR_NUM}**
 
 🔗 PR: ${PR_URL}
 📋 Issue: ${ISSUE_URL}
 📦 Repo: \`${REPO}\`
-🎯 Project: \`${PROJECT}\`
-🔢 Issue: \`${ISSUE_NUM}\`
 
-**Please review this PR.** Check \`.github/PIPELINE.md\`, \`CLAUDE.md\`, and project guidelines.
-
-After review, run the appropriate pipeline command (approve/reject)."
+**Instructions:**
+1. \`gh pr diff ${PR_NUM} --repo ${REPO}\` — read the diff
+2. \`cd <repo> && cat .github/PIPELINE.md\` — read project review criteria & gotchas
+3. Review for: correctness, edge cases, error handling, security, coding standards
+4. Post review to GitHub:
+   ✅ \`gh pr review ${PR_NUM} --repo ${REPO} --approve --body 'summary'\`
+   ❌ \`gh pr review ${PR_NUM} --repo ${REPO} --request-changes --body 'feedback'\`
+5. Advance pipeline:
+   ✅ \`${PIPELINE_CMD} approve ${ISSUE_NUM}\`
+   ❌ \`${PIPELINE_CMD} reject ${ISSUE_NUM} 'feedback'\`
+6. Post your summary in this thread."
 
 HTTP_CODE=$(curl -s -w "%{http_code}" -o /dev/null -X POST \
   "${WEBHOOK_URL}?thread_id=${THREAD_ID}" \
