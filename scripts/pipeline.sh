@@ -141,10 +141,22 @@ bot_post() {
 
 # ============ WORKER POOL ============
 
-WORKERS_STATE_FILE="$SKILL_DIR/projects/.workers.json"
-[ -f "$WORKERS_STATE_FILE" ] || echo '{}' > "$WORKERS_STATE_FILE"
+# Workers state is per-project: projects/<name>.workers.json
+# Initialized in load_project via WORKERS_STATE_FILE
+
+get_workers_state_file() {
+  echo "$PROJECTS_DIR/${PROJECT_NAME}.workers.json"
+}
+
+ensure_workers_state() {
+  local f
+  f=$(get_workers_state_file)
+  [ -f "$f" ] || echo '{}' > "$f"
+  WORKERS_STATE_FILE="$f"
+}
 
 is_worker_paused() {
+  ensure_workers_state
   local wid="$1"
   local paused
   paused=$(jq -r --arg wid "$wid" '.[$wid].paused // false' "$WORKERS_STATE_FILE")
@@ -152,6 +164,7 @@ is_worker_paused() {
 }
 
 pause_worker() {
+  ensure_workers_state
   local wid="$1" reason="${2:-}"
   local tmp=$(mktemp)
   jq --arg wid "$wid" --arg reason "$reason" --arg ts "$(timestamp)" \
@@ -160,6 +173,7 @@ pause_worker() {
 }
 
 unpause_worker() {
+  ensure_workers_state
   local wid="$1"
   local tmp=$(mktemp)
   jq --arg wid "$wid" '.[$wid] = { paused: false }' \

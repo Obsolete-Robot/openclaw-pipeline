@@ -2,5 +2,5 @@
 projects/*.conf
 !projects/example.conf
 projects/*.state.json
-projects/.workers.json
+projects/*.workers.json
 scripts/pipeline.local.conf
