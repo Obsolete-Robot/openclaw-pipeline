@@ -499,10 +499,7 @@ ${url}
 ${description}
 
 ---
-📚 **PROJECT CONTEXT — Read these first (if they exist in the repo):**
-- \`.github/PIPELINE.md\` — project overview, coding standards, deploy process, gotchas
-- \`CLAUDE.md\` / \`AGENTS.md\` — AI-specific coding guidelines
-- \`CONTRIBUTING.md\` — contribution conventions
+📚 **Read \`.github/PIPELINE.md\` in the repo first** — it has everything you need: project context, coding standards, gotchas, and pipeline role instructions.
 
 ---
 ⚠️ **RULES — you MUST follow this process:**
@@ -516,7 +513,7 @@ cd ~/projects/${worktree_dir}
 \`\`\`
 ⚠️ You MUST work in \`~/projects/${worktree_dir}/\` for this issue. Never commit in the main repo directory. Other workers are using it simultaneously. When done, clean up: \`git worktree remove ~/projects/${worktree_dir}\`
 
-1. **Read project context files first** (listed above). Understand the codebase before coding.
+1. **Read \`.github/PIPELINE.md\` first.** Understand the codebase before coding.
 2. Do the work yourself here. No sub-agents or branch workers.
 3. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
 4. After creating PR, request a review (replace \`<PR_NUM>\` with actual number):
