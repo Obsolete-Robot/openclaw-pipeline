@@ -49,6 +49,17 @@ When `ORCHESTRATOR_ID` is set in config, `pr-ready` @mentions the orchestrator b
 - **Everything happens in-thread** — visible and auditable
 - **Fallback:** If `ORCHESTRATOR_ID` is not set, falls back to spawning a review session directly (legacy behavior)
 
+## Handling Review Requests (Orchestrator Behavior)
+
+If you are @mentioned in a pipeline forum thread with a message containing **"review PR #"** or **"Review requested: PR #"** (typically from a webhook named "Pipeline"):
+
+1. **Extract** the PR number, issue number, and repo from the message.
+2. **Clone or fetch the repo** and read `.github/PIPELINE.md` — it contains the full reviewer playbook including project-specific review criteria.
+3. **Follow the reviewer instructions** in that file (fetch diff, review, post to GitHub, run pipeline approve/reject).
+4. If `.github/PIPELINE.md` doesn't exist, review the PR using general best practices and post your findings in the thread.
+
+This is agent-agnostic: any bot with repo access and this skill can be the orchestrator. The repo's `.github/PIPELINE.md` is the single source of truth for how to review.
+
 ## Slash Command Parsing
 
 `/pipeline <command> [project] [args...]`
