@@ -519,10 +519,11 @@ cd ~/projects/${worktree_dir}
 1. **Read project context files first** (listed above). Understand the codebase before coding.
 2. Do the work yourself here. No sub-agents or branch workers.
 3. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
-4. After creating PR, request a review using **one of**:
-   - \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\` (if pipeline is installed)
-   - \`~/.openclaw/workspace/skills/pipeline/scripts/request-review.sh ${PROJECT_NAME} ${issue_num} <N> ${thread}\` (standalone, just needs curl)
-   - Or post in this thread asking for a review (orchestrator will pick it up)
+4. After creating PR, request a review (replace \`<PR_NUM>\` with actual number):
+   \`\`\`
+   PR=<PR_NUM> WH=\$(cat ~/.config/discord/projects/${PROJECT_NAME}/forum-webhook) && curl -s -X POST "\$WH?thread_id=${thread}" -H 'Content-Type: application/json' -d "{\"content\":\"<@${ORCHESTRATOR_ID:-}> review PR #\$PR for issue #${issue_num} (${REPO})\",\"username\":\"Pipeline\"}"
+   \`\`\`
+   Or if pipeline is installed: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
 5. Post a summary of what you built and what changed.
 6. A separate reviewer will post results to this thread. Wait for their feedback.
 7. If review ❌: fix the issues, push, then run pr-ready again.
