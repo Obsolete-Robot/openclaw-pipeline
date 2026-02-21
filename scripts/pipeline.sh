@@ -516,11 +516,7 @@ cd ~/projects/${worktree_dir}
 1. **Read \`.github/PIPELINE.md\` first.** Understand the codebase before coding.
 2. Do the work yourself here. No sub-agents or branch workers.
 3. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
-4. After creating PR, request a review (replace \`<PR_NUM>\` with actual number):
-   \`\`\`
-   PR=<PR_NUM> WH=\$(cat ~/.config/discord/projects/${PROJECT_NAME}/forum-webhook) && curl -s -X POST "\$WH?thread_id=${thread}" -H 'Content-Type: application/json' -d "\$(jq -n --arg c \"<@${ORCHESTRATOR_ID:-}> 📤 Review PR #\$PR — repo: ${REPO}, issue: #${issue_num}. Instructions: 1) gh pr diff \$PR --repo ${REPO} 2) Read .github/PIPELINE.md for review criteria 3) Review for correctness, security, coding standards 4) gh pr review \$PR --repo ${REPO} --approve or --request-changes 5) Run: ${pipeline_cmd} approve ${issue_num} OR reject ${issue_num} reason 6) Post summary in thread\" '{content:\$c,username:\"Pipeline\"}')"
-   \`\`\`
-   Or if pipeline is installed: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
+4. After creating PR, request a review: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
 5. Post a summary of what you built and what changed.
 6. A separate reviewer will post results to this thread. Wait for their feedback.
 7. If review ❌: fix the issues, push, then run pr-ready again.
