@@ -516,7 +516,13 @@ cd ~/projects/${worktree_dir}
 1. **Read \`.github/PIPELINE.md\` first.** Understand the codebase before coding.
 2. Do the work yourself here. No sub-agents or branch workers.
 3. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
-4. After creating PR, request a review: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
+4. After creating PR, request a review by posting to this thread:
+   \`\`\`bash
+   PRNUM=<your-PR-number>
+   WH=\"\$(cat ~/.config/discord/projects/${PROJECT_NAME}/forum-webhook)\"
+   curl -s -X POST \"\${WH}?thread_id=${thread}\" -H \"Content-Type: application/json\" -d \"{\\\"content\\\":\\\"<@1471574185724608675> pr-ready ${issue_num} --pr \${PRNUM}\\\",\\\"username\\\":\\\"Pipeline\\\"}\"
+   \`\`\`
+   Or if pipeline CLI is available: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
 5. Post a summary of what you built and what changed.
 6. A separate reviewer will post results to this thread. Wait for their feedback.
 7. If review ❌: fix the issues, push, then run pr-ready again.
