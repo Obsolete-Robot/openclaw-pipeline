@@ -505,9 +505,10 @@ ${description}
 🌲 **Worktree:** \`git worktree add ../${worktree_dir} -b ${branch} origin/${MERGE_TARGET:-dev}\`
 Work in \`~/projects/${worktree_dir}/\` — do NOT use main checkout.
 
-**After PR, request review by posting in this thread:**
-\`<@${orchestrator_id_val}> pr-ready ${issue_num} --pr <YOUR_PR_NUM>\`
-
+**After PR, request review (replace YOUR_PR_NUM):**
+\`\`\`
+curl -s -X POST '${FORUM_WEBHOOK_URL}?thread_id=${thread}' -H 'Content-Type: application/json' -d '{\"content\":\"<@${orchestrator_id_val}> pr-ready ${issue_num} --pr YOUR_PR_NUM\",\"username\":\"Pipeline\"}'
+\`\`\`
 🚫 No self-merge. Wait for review."
 
   webhook_post "$FORUM_WEBHOOK_URL" "$assign_msg" "Pipeline" "$thread"
