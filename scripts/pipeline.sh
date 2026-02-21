@@ -494,7 +494,12 @@ _assign_to_thread() {
   local worktree_dir="${REPO##*/}-${branch}"
   
   local webhook_file_path="\\\$HOME/.config/discord/projects/${PROJECT_NAME}/forum-webhook"
-  local orchestrator_mention="<@1471574185724608675>"
+  local orchestrator_id_val="${ORCHESTRATOR_ID:-}"
+  
+  if [ -z "$orchestrator_id_val" ]; then
+    echo "⚠️  Warning: ORCHESTRATOR_ID not set in project config. Workers won't be able to request reviews."
+  fi
+  local orchestrator_mention="<@${orchestrator_id_val}>"
   
   local assign_msg="<@$worker_id> **Issue #${issue_num}: ${title}**
 ${url}
