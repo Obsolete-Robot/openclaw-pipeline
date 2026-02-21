@@ -493,19 +493,24 @@ _assign_to_thread() {
   
   local worktree_dir="${REPO##*/}-${branch}"
   
+  local webhook_file_path="\\\$HOME/.config/discord/projects/${PROJECT_NAME}/forum-webhook"
+  local orchestrator_mention="<@1471574185724608675>"
+  
   local assign_msg="<@$worker_id> **Issue #${issue_num}: ${title}**
 ${url}
 
 ${description}
 
 ---
-⚠️ **Read \`.github/PIPELINE.md\` first!**
+📚 **Read \`.github/PIPELINE.md\` first!**
+🌲 **Worktree:** \`git worktree add ../${worktree_dir} -b ${branch} origin/${MERGE_TARGET:-dev}\`
+Work in \`~/projects/${worktree_dir}/\` — do NOT use main checkout.
 
-🌲 **Worktree:** \`git worktree add ../tits-and-cards-${branch} -b ${branch} origin/${MERGE_TARGET:-dev}\` — work in \`~/projects/tits-and-cards-${branch}/\`
-
-After PR, request review: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
-
-🚫 No self-merge, no working in main checkout."
+**After PR, request review:**
+\`\`\`
+curl -s -X POST \"\$(cat ${webhook_file_path})?thread_id=${thread}\" -H \"Content-Type: application/json\" -d '{\"content\":\"${orchestrator_mention} pr-ready ${issue_num} --pr <YOUR_PR_NUM>\",\"username\":\"Pipeline\"}'
+\`\`\`
+🚫 No self-merge. Wait for review."
 
   webhook_post "$FORUM_WEBHOOK_URL" "$assign_msg" "Pipeline" "$thread"
   
