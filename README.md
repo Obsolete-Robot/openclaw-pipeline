@@ -57,6 +57,122 @@ pipeline fetch-tags myproject
 pipeline setup myproject
 ```
 
+## Onboarding Worker Bots
+
+When adding an OpenClaw bot as a worker, its **OpenClaw config** must be set up to receive webhook messages from the pipeline. This is the most common source of "bot doesn't respond to assignments" issues.
+
+### Requirements
+
+The worker bot's `openclaw.json` needs:
+
+#### 1. `allowBots: true`
+
+Webhook messages are flagged as bot messages by Discord. Without this, they're silently dropped.
+
+```json5
+{
+  "channels": {
+    "discord": {
+      "allowBots": true
+    }
+  }
+}
+```
+
+#### 2. Webhook IDs in the guild's `users` allowlist
+
+**This is the one everyone misses.** If the guild uses `groupPolicy: "allowlist"` (recommended), the `users` array controls who can trigger the bot. Webhook authors must be in this list or their messages are **silently dropped**.
+
+Get webhook IDs from the webhook URLs:
+```
+https://discord.com/api/webhooks/{WEBHOOK_ID}/{token}
+                                  ^^^^^^^^^^^
+```
+
+Add them to the worker's config:
+
+```json5
+{
+  "channels": {
+    "discord": {
+      "groupPolicy": "allowlist",
+      "guilds": {
+        "YOUR_GUILD_ID": {
+          "users": [
+            "human_user_id_1",
+            "human_user_id_2",
+            "FORUM_WEBHOOK_ID",      // ← pipeline webhook IDs
+            "REVIEWS_WEBHOOK_ID",
+            "PRODUCTION_WEBHOOK_ID"
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+You can find the webhook IDs for a project with:
+```bash
+# From the pipeline host machine
+for f in ~/.config/discord/projects/<project>/*-webhook; do
+  echo "$(basename $f): $(grep -oP 'webhooks/\K[0-9]+' $f)"
+done
+```
+
+#### 3. Forum channel allowed
+
+The forum channel where threads are created must be `allow: true`:
+
+```json5
+{
+  "channels": {
+    "discord": {
+      "guilds": {
+        "YOUR_GUILD_ID": {
+          "channels": {
+            "FORUM_CHANNEL_ID": {
+              "allow": true,
+              "requireMention": true
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Thread access is automatic — OpenClaw sees messages in threads under allowed channels.
+
+#### 4. Restart the worker bot
+
+After config changes, restart the worker's gateway:
+```bash
+openclaw gateway restart
+# or send SIGUSR1 to the gateway process
+kill -USR1 $(pgrep -f 'openclaw-gateway')
+```
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Bot ignores all webhook messages | `allowBots` not set | Add `allowBots: true` to `channels.discord` |
+| Bot ignores webhook messages in one guild | Webhook ID not in `users` array | Add webhook IDs to the guild's `users` allowlist |
+| Bot ignores messages in forum threads | Forum channel not allowed | Set `allow: true` on the forum channel |
+| Bot responds to some webhooks but not others | Missing specific webhook ID | Check all pipeline webhook IDs are in `users` |
+| Slash commands work but webhooks don't | Commands bypass allowlist, webhooks don't | Add webhook IDs to `users` |
+
+### Quick Onboarding Checklist
+
+- [ ] `allowBots: true` in `channels.discord`
+- [ ] All pipeline webhook IDs added to guild `users` array
+- [ ] Forum channel set to `allow: true`
+- [ ] PR review channel set to `allow: true` (if bot reviews PRs)
+- [ ] Bot restarted after config changes
+- [ ] Test with: `pipeline -p <project> assign <issue_num>`
+
 ## Usage
 
 ```bash
@@ -75,6 +191,22 @@ pipeline -p myproject pr-ready 42 --pr 87
 pipeline -p myproject approve 42
 ```
 
+## Worker Pool
+
+Multiple bots can share the workload:
+
+```bash
+pipeline config myproject WORKER_BOT_IDS "bot_id_1 bot_id_2 bot_id_3"
+```
+
+On assign, the pipeline auto-selects the worker with the fewest active issues. Each issue tracks its assigned worker.
+
+```
+/pipeline workers myproject           # show pool status
+/pipeline takeabreak myproject @Bot   # put a worker on break
+/pipeline backtowork myproject @Bot   # bring them back
+```
+
 ## Multi-Project
 
 Each project gets its own config + state file. Run multiple projects on the same server or across different servers:
@@ -82,6 +214,19 @@ Each project gets its own config + state file. Run multiple projects on the same
 ```
 /pipeline projects              # list all
 /pipeline setup another-app     # add another
+```
+
+## Per-Role Models
+
+Different models for different jobs:
+
+```bash
+# Workers need the big brain for coding (default: opus)
+pipeline config myproject WORKER_MODEL "anthropic/claude-opus-4-6"
+
+# Reviewers and spec writers can use something cheaper (default: sonnet)
+pipeline config myproject REVIEWER_MODEL "anthropic/claude-sonnet-4-6"
+pipeline config myproject SPEC_MODEL "anthropic/claude-sonnet-4-6"
 ```
 
 ## Dependencies
@@ -114,11 +259,10 @@ You: "/pipeline new myapp bug: panel broken"
     "pipeline assign myapp 42"
            │
     ┌──────┴──────────────────────────────┐
-    │ 1. Spawn FRESH worker session        │
-    │    (gets only issue context)         │
-    │ 2. Post assignment to thread         │
-    │ 3. Worker codes fix, creates PR      │
-    │ 4. Worker runs: pipeline pr-ready    │
+    │ 1. Post assignment to thread         │
+    │    (@mention selected worker bot)    │
+    │ 2. Worker codes fix, creates PR      │
+    │ 3. Worker runs: pipeline pr-ready    │
     └─────────────────────────────────────┘
            │
     ┌──────┴──────────────────────────────┐
