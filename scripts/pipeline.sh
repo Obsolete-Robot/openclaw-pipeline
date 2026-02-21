@@ -493,13 +493,7 @@ _assign_to_thread() {
   
   local worktree_dir="${REPO##*/}-${branch}"
   
-  local webhook_file_path="\\\$HOME/.config/discord/projects/${PROJECT_NAME}/forum-webhook"
   local orchestrator_id_val="${ORCHESTRATOR_ID:-}"
-  
-  if [ -z "$orchestrator_id_val" ]; then
-    echo "⚠️  Warning: ORCHESTRATOR_ID not set in project config. Workers won't be able to request reviews."
-  fi
-  local orchestrator_mention="<@${orchestrator_id_val}>"
   
   local assign_msg="<@$worker_id> **Issue #${issue_num}: ${title}**
 ${url}
@@ -511,10 +505,9 @@ ${description}
 🌲 **Worktree:** \`git worktree add ../${worktree_dir} -b ${branch} origin/${MERGE_TARGET:-dev}\`
 Work in \`~/projects/${worktree_dir}/\` — do NOT use main checkout.
 
-**After PR, request review:**
-\`\`\`
-curl -s -X POST \"\$(cat ${webhook_file_path})?thread_id=${thread}\" -H \"Content-Type: application/json\" -d '{\"content\":\"${orchestrator_mention} pr-ready ${issue_num} --pr <YOUR_PR_NUM>\",\"username\":\"Pipeline\"}'
-\`\`\`
+**After PR, request review by posting in this thread:**
+\`<@${orchestrator_id_val}> pr-ready ${issue_num} --pr <YOUR_PR_NUM>\`
+
 🚫 No self-merge. Wait for review."
 
   webhook_post "$FORUM_WEBHOOK_URL" "$assign_msg" "Pipeline" "$thread"
