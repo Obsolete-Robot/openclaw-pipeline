@@ -499,39 +499,13 @@ ${url}
 ${description}
 
 ---
-📚 **Read \`.github/PIPELINE.md\` in the repo first** — it has everything you need: project context, coding standards, gotchas, and pipeline role instructions.
+⚠️ **Read \`.github/PIPELINE.md\` first!**
 
----
-⚠️ **RULES — you MUST follow this process:**
+🌲 **Worktree:** \`git worktree add ../tits-and-cards-${branch} -b ${branch} origin/${MERGE_TARGET:-dev}\` — work in \`~/projects/tits-and-cards-${branch}/\`
 
-**🌲 WORKTREE REQUIRED — DO NOT work in the main repo checkout!**
-\`\`\`bash
-cd ~/projects/${REPO##*/}
-git fetch origin
-git worktree add ../${worktree_dir} -b ${branch} origin/${MERGE_TARGET:-dev}
-cd ~/projects/${worktree_dir}
-\`\`\`
-⚠️ You MUST work in \`~/projects/${worktree_dir}/\` for this issue. Never commit in the main repo directory. Other workers are using it simultaneously. When done, clean up: \`git worktree remove ~/projects/${worktree_dir}\`
+After PR, request review: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
 
-1. **Read \`.github/PIPELINE.md\` first.** Understand the codebase before coding.
-2. Do the work yourself here. No sub-agents or branch workers.
-3. Branch: \`${branch}\` → PR to \`${MERGE_TARGET:-dev}\` | Repo: \`${REPO}\`
-4. After creating PR, request a review by posting to this thread:
-   \`\`\`bash
-   PRNUM=<your-PR-number>
-   WH=\"\$(cat ~/.config/discord/projects/${PROJECT_NAME}/forum-webhook)\"
-   curl -s -X POST \"\${WH}?thread_id=${thread}\" -H \"Content-Type: application/json\" -d \"{\\\"content\\\":\\\"<@1471574185724608675> pr-ready ${issue_num} --pr \${PRNUM}\\\",\\\"username\\\":\\\"Pipeline\\\"}\"
-   \`\`\`
-   Or if pipeline CLI is available: \`${pipeline_cmd} pr-ready ${issue_num} --pr <N>\`
-5. Post a summary of what you built and what changed.
-6. A separate reviewer will post results to this thread. Wait for their feedback.
-7. If review ❌: fix the issues, push, then run pr-ready again.
-8. If review ✅: the reviewer handles merge and deploy. You're done.
-9. If already resolved/duplicate: \`${pipeline_cmd} close ${issue_num} \"reason\"\`
-
-**🚫 Do NOT run \`approve\`, \`gh pr merge\`, \`gh issue close\`, or self-review.**
-**🚫 The worker NEVER approves or merges their own PR.**
-**🚫 Do NOT work in \`~/projects/${REPO##*/}/\` directly — use your worktree!**"
+🚫 No self-merge, no working in main checkout."
 
   webhook_post "$FORUM_WEBHOOK_URL" "$assign_msg" "Pipeline" "$thread"
   
