@@ -74,10 +74,14 @@ MSG="<@${ORCHESTRATOR_ID}> 📤 **Review requested: PR #${PR_NUM}**
 4. Post review to GitHub:
    ✅ \`gh pr review ${PR_NUM} --repo ${REPO} --approve --body 'summary'\`
    ❌ \`gh pr review ${PR_NUM} --repo ${REPO} --request-changes --body 'feedback'\`
-5. Advance pipeline:
+5. **Post your result back to this thread via webhook, tagging the orchestrator:**
+   \`\`\`
+   WH=\$(cat ~/.config/discord/projects/${PROJECT}/forum-webhook)
+   curl -s -X POST \"\${WH}?thread_id=${THREAD_ID}\" -H 'Content-Type: application/json' -d '{\"content\":\"<@${ORCHESTRATOR_ID}> ✅ PR #${PR_NUM} APPROVED — summary here\",\"username\":\"Pipeline\"}'
+   \`\`\`
+   Or if pipeline CLI available:
    ✅ \`${PIPELINE_CMD} approve ${ISSUE_NUM}\`
-   ❌ \`${PIPELINE_CMD} reject ${ISSUE_NUM} 'feedback'\`
-6. Post your summary in this thread."
+   ❌ \`${PIPELINE_CMD} reject ${ISSUE_NUM} 'feedback'\`"
 
 HTTP_CODE=$(curl -s -w "%{http_code}" -o /dev/null -X POST \
   "${WEBHOOK_URL}?thread_id=${THREAD_ID}" \
